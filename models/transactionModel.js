@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const Accounting = require('./accountingModel');
 
 class Transaction {
   // Get all transactions with joined account information
@@ -134,6 +135,15 @@ class Transaction {
         [transaction.amount, transaction.sourceAccount]
       );
       
+      // Add ledger entries for accounting
+      const newTransaction = { ...transaction, id: result.insertId };
+      try {
+        await Accounting.createLedgerEntriesForTransaction(newTransaction, connection);
+      } catch (accountingError) {
+        console.error('Error creating ledger entries:', accountingError);
+        // Continue even if ledger entries fail - don't roll back the transaction
+      }
+      
       await connection.commit();
       
       // Get the created transaction with joined data
@@ -199,10 +209,10 @@ class Transaction {
             // Same account, just adjust the difference
             await connection.query(
               'UPDATE accounts SET balance = balance - ? + ? WHERE id = ?',
-              [oldTransaction.amount, transaction.amount, transaction.sourceAccount]
+              [oldTransaction.amount, transaction.amount, oldTransaction.source_account_id]
             );
           } else {
-            // Different accounts, reverse from old and add to new
+            // Different accounts, reverse from old and apply to new
             await connection.query(
               'UPDATE accounts SET balance = balance - ? WHERE id = ?',
               [oldTransaction.amount, oldTransaction.source_account_id]
@@ -213,26 +223,157 @@ class Transaction {
               [transaction.amount, transaction.sourceAccount]
             );
           }
+          
+          // Delete old ledger entries and create new ones
+          try {
+            await Accounting.deleteLedgerEntriesForTransaction(id, connection);
+            
+            // Create new ledger entries
+            const updatedTransaction = { 
+              ...transaction, 
+              id: id 
+            };
+            await Accounting.createLedgerEntriesForTransaction(updatedTransaction, connection);
+          } catch (accountingError) {
+            console.error('Error updating ledger entries:', accountingError);
+            // Continue even if ledger entries fail - don't roll back the transaction
+          }
         }
         
-        // Update transaction data
-        await connection.query(
-          'UPDATE transactions SET source_account_id = ?, category = ?, amount = ?, date = ?, description = ?, status = ? WHERE id = ?',
-          [
-            transaction.sourceAccount,
-            transaction.category,
-            transaction.amount,
-            transaction.date,
-            transaction.description || null,
-            transaction.status || oldTransaction.status,
-            id
-          ]
-        );
+        // Build dynamic update query based on provided fields
+        const updateFields = [];
+        const updateValues = [];
+        
+        if (transaction.sourceAccount !== undefined) {
+          updateFields.push('source_account_id = ?');
+          updateValues.push(transaction.sourceAccount);
+        }
+        
+        if (transaction.category !== undefined) {
+          updateFields.push('category = ?');
+          updateValues.push(transaction.category);
+        }
+        
+        if (transaction.amount !== undefined) {
+          updateFields.push('amount = ?');
+          updateValues.push(transaction.amount);
+        }
+        
+        if (transaction.date !== undefined) {
+          updateFields.push('date = ?');
+          updateValues.push(transaction.date);
+        }
+        
+        if (transaction.description !== undefined) {
+          updateFields.push('description = ?');
+          updateValues.push(transaction.description);
+        }
+        
+        if (transaction.tradeDate !== undefined) {
+          updateFields.push('trade_date = ?');
+          updateValues.push(transaction.tradeDate);
+        }
+        
+        if (transaction.valueDate !== undefined) {
+          updateFields.push('value_date = ?');
+          updateValues.push(transaction.valueDate);
+        }
+        
+        if (transaction.security_id !== undefined) {
+          updateFields.push('security_id = ?');
+          updateValues.push(transaction.security_id);
+        }
+        
+        if (transaction.interest_rate !== undefined) {
+          updateFields.push('interest_rate = ?');
+          updateValues.push(transaction.interest_rate);
+        }
+        
+        if (transaction.counterparty_id !== undefined) {
+          updateFields.push('counterparty_id = ?');
+          updateValues.push(transaction.counterparty_id);
+        }
+        
+        if (transaction.transaction_type_id !== undefined) {
+          updateFields.push('transaction_type_id = ?');
+          updateValues.push(transaction.transaction_type_id);
+        }
+        
+        if (transaction.settlement_mode !== undefined) {
+          updateFields.push('settlement_mode = ?');
+          updateValues.push(transaction.settlement_mode);
+        }
+        
+        if (transaction.price !== undefined) {
+          updateFields.push('price = ?');
+          updateValues.push(transaction.price);
+        }
+        
+        if (transaction.yield !== undefined) {
+          updateFields.push('yield = ?');
+          updateValues.push(transaction.yield);
+        }
+        
+        if (transaction.portfolio !== undefined) {
+          updateFields.push('portfolio = ?');
+          updateValues.push(transaction.portfolio);
+        }
+        
+        if (transaction.strategy !== undefined) {
+          updateFields.push('strategy = ?');
+          updateValues.push(transaction.strategy);
+        }
+        
+        if (transaction.currency !== undefined) {
+          updateFields.push('currency = ?');
+          updateValues.push(transaction.currency);
+        }
+        
+        if (transaction.transaction_code !== undefined) {
+          updateFields.push('transaction_code = ?');
+          updateValues.push(transaction.transaction_code);
+        }
+        
+        if (transaction.commission !== undefined) {
+          updateFields.push('commission = ?');
+          updateValues.push(transaction.commission);
+        }
+        
+        if (transaction.brokerage !== undefined) {
+          updateFields.push('brokerage = ?');
+          updateValues.push(transaction.brokerage);
+        }
+        
+        if (transaction.remarks !== undefined) {
+          updateFields.push('remarks = ?');
+          updateValues.push(transaction.remarks);
+        }
+        
+        if (transaction.status !== undefined) {
+          updateFields.push('status = ?');
+          updateValues.push(transaction.status);
+        }
+        
+        if (transaction.comment !== undefined) {
+          updateFields.push('comment = ?');
+          updateValues.push(transaction.comment);
+        }
+        
+        // Add transaction ID to values array
+        updateValues.push(id);
+        
+        // Execute update if there are fields to update
+        if (updateFields.length > 0) {
+          await connection.query(
+            `UPDATE transactions SET ${updateFields.join(', ')} WHERE id = ?`,
+            updateValues
+          );
+        }
       }
       
       await connection.commit();
       
-      // Get the updated transaction
+      // Get the updated transaction with joined data
       const updatedTransaction = await this.getById(id);
       return updatedTransaction;
     } catch (error) {
@@ -250,7 +391,7 @@ class Transaction {
     try {
       await connection.beginTransaction();
       
-      // Get transaction details before deletion
+      // Get transaction to adjust account balance
       const [transactionRows] = await connection.query(
         'SELECT amount, source_account_id FROM transactions WHERE id = ?',
         [id]
@@ -262,17 +403,26 @@ class Transaction {
       
       const transaction = transactionRows[0];
       
-      // Reverse the transaction amount from the account balance
+      // Delete ledger entries first (foreign key constraint)
+      try {
+        await Accounting.deleteLedgerEntriesForTransaction(id, connection);
+      } catch (accountingError) {
+        console.error('Error deleting ledger entries:', accountingError);
+        // Continue even if ledger entries deletion fails
+      }
+      
+      // Delete the transaction
+      await connection.query('DELETE FROM transactions WHERE id = ?', [id]);
+      
+      // Reverse the account balance adjustment
       await connection.query(
         'UPDATE accounts SET balance = balance - ? WHERE id = ?',
         [transaction.amount, transaction.source_account_id]
       );
       
-      // Delete the transaction
-      await connection.query('DELETE FROM transactions WHERE id = ?', [id]);
-      
       await connection.commit();
-      return id;
+      
+      return { id, deleted: true };
     } catch (error) {
       await connection.rollback();
       throw error;
