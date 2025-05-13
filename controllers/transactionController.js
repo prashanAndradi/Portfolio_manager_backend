@@ -157,14 +157,24 @@ exports.updateTransaction = async (req, res) => {
       });
     } else {
       // This is a regular transaction update
-      // Check if user has permission to update transactions
-      if (user?.role === 'authorizer') {
+      // If rejected, only creator can edit
+      if (transaction.status === 'rejected') {
+        if (!transaction.user || !user?.username || transaction.user !== user.username) {
+          return res.status(403).json({
+            success: false,
+            message: 'Only the creator can edit a rejected transaction.'
+          });
+        }
+      } else if (user?.role === 'authorizer') {
         return res.status(403).json({
           success: false,
           message: 'Authorizers can only update transaction status'
         });
       }
-      
+      // Always reset status to 'pending' for normal users (not authorizer/admin)
+      if (user?.role !== 'authorizer' && user?.role !== 'admin') {
+        data.status = 'pending';
+      }
       // Validate required fields
       if (!data.amount) {
         return res.status(400).json({
@@ -172,7 +182,6 @@ exports.updateTransaction = async (req, res) => {
           message: 'Amount is required'
         });
       }
-      
       // Update the transaction
       const updatedTransaction = await Transaction.update(id, data);
       

@@ -16,16 +16,30 @@ exports.getAllUsers = async (req, res) => {
         id: 1,
         username: 'user1',
         role: 'user',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        allowed_tabs: ['transactions', 'isin_master']
       },
       {
         id: 2,
         username: 'authorizer1',
         role: 'authorizer',
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        allowed_tabs: ['transactions', 'isin_master']
       }
     ];
     
     res.status(200).json(mockUsers);
+  }
+};
+
+exports.updateUserTabs = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { allowed_tabs } = req.body;
+    await User.updateAllowedTabs(id, allowed_tabs);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error updating user tabs:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 };

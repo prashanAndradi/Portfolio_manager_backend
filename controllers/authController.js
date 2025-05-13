@@ -4,7 +4,7 @@ const User = require('../models/userModel');
 // User registration with role selection
 exports.register = async (req, res) => {
   try {
-    const { username, password, role } = req.body;
+    const { username, password, role, allowed_tabs } = req.body;
     
     // Static admin account check
     if (username === 'admin' && password === 'Admin@321') {
@@ -14,7 +14,17 @@ exports.register = async (req, res) => {
           id: 0,
           username: 'admin',
           role: 'admin',
-          token: 'static-admin-token'
+          token: 'static-admin-token',
+          allowed_tabs: [
+            'transactions',
+            'isin_master',
+            'fixed_income_gsec',
+            'fixed_income_others',
+            'payments_rtgs',
+            'payments_other',
+            'repo',
+            'reverse_repo'
+          ]
         }
       });
     }
@@ -40,7 +50,8 @@ exports.register = async (req, res) => {
     const user = await User.create({
       username,
       password: hashedPassword,
-      role
+      role,
+      allowed_tabs: Array.isArray(allowed_tabs) ? allowed_tabs : []
     });
     
     // Check if user creation was successful
@@ -54,7 +65,8 @@ exports.register = async (req, res) => {
     res.status(201).json({ 
       id: user.id,
       username: user.username,
-      role: user.role
+      role: user.role,
+      allowed_tabs: user.allowed_tabs
     });
     
   } catch (error) {

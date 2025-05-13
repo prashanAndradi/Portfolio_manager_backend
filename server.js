@@ -28,6 +28,7 @@ const userRoutes = require('./routes/userRoutes');
 const authRoutes = require('./routes/authRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const accountingRoutes = require('./routes/accounting');
+const isinMasterRoutes = require('./routes/isinMasterRoutes');
 
 // Use routes
 app.use('/api/accounts', accountRoutes);
@@ -38,6 +39,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/accounting', accountingRoutes);
+app.use('/api/isin-master', isinMasterRoutes);
 
 // Add a direct register endpoint that will definitely work
 app.post('/api/auth/register', async (req, res) => {
