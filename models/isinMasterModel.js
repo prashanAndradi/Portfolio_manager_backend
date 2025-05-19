@@ -18,7 +18,15 @@ const IsinMaster = {
   },
   getAll: (callback) => {
     db.query('SELECT * FROM isin_master', callback);
-  }
+  },
+  searchByIsin: (query, callback) => {
+    const sql = 'SELECT isin_number FROM isin_master WHERE isin_number LIKE ? LIMIT 10';
+    db.query(sql, [`%${query}%`], callback);
+  },
+  getById: (id, callback) => {
+    db.query('SELECT * FROM isin_master WHERE id = ?', [id], callback);
+  },
+
 };
 
 module.exports = IsinMaster;
