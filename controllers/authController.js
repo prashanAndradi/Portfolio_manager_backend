@@ -30,7 +30,8 @@ exports.register = async (req, res) => {
     }
     
     // Validate role
-    if (!['user', 'authorizer'].includes(role)) {
+    const allowedRoles = ['user', 'authorizer', 'limits_allocating_user', 'limits_allocating_authorizer'];
+    if (!allowedRoles.includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
     

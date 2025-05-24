@@ -3,8 +3,8 @@ const db = require('../db');
 const Gsec = {
   create: (data, callback) => {
     const sql = `INSERT INTO gsec (
-      trade_type, transaction_type, counterparty, deal_number, isin, face_value, value_date, next_coupon_date, last_coupon_date, number_of_days_interest_accrued, number_of_days_for_coupon_period, accrued_interest, coupon_interest, clean_price, dirty_price, accrued_interest_calculation, accrued_interest_six_decimals, accrued_interest_for_100, settlement_amount, settlement_mode, issue_date, maturity_date, coupon_dates, yield
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      trade_type, transaction_type, counterparty, deal_number, isin, face_value, value_date, next_coupon_date, last_coupon_date, number_of_days_interest_accrued, number_of_days_for_coupon_period, accrued_interest, coupon_interest, clean_price, dirty_price, accrued_interest_calculation, accrued_interest_six_decimals, accrued_interest_for_100, settlement_amount, settlement_mode, issue_date, maturity_date, coupon_dates, yield, brokerage
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     const values = [
       data.tradeType,
       data.transactionType,
@@ -29,7 +29,8 @@ const Gsec = {
       data.issueDate,
       data.maturityDate,
       data.couponDates,
-      data.yield
+      data.yield,
+      data.brokerage
     ];
     db.query(sql, values, callback);
   }
