@@ -40,7 +40,30 @@ const IsinCouponSchedule = {
       }
       callback(null, { previousCouponDate, nextCouponDate });
     });
-  }
+  },
+  /**
+   * Get all coupon months/days (MM/DD) for a given ISIN, sorted.
+   * @param {string} isin - The ISIN number.
+   * @param {function} callback - Callback with (err, [ '04/15', '10/15', ... ])
+   */
+  getCouponMonths: (isin, callback) => {
+    const sql = `SELECT DISTINCT coupon_date FROM isin_coupon_schedule WHERE isin = ? ORDER BY coupon_date ASC`;
+    db.query(sql, [isin], (err, results) => {
+      if (err) return callback(err);
+      if (!results || results.length === 0) return callback(null, []);
+      // Extract MM/DD from coupon_date
+      const months = results.map(r => {
+        const d = new Date(r.coupon_date);
+        if (isNaN(d.getTime())) return null;
+        return (d.getMonth() + 1).toString().padStart(2, '0') + '/' + d.getDate().toString().padStart(2, '0');
+      }).filter(Boolean);
+      // Remove duplicates and sort
+      const unique = Array.from(new Set(months));
+      unique.sort();
+      callback(null, unique);
+    });
+  },
+
 };
 
 module.exports = IsinCouponSchedule;

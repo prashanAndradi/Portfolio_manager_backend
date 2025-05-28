@@ -88,7 +88,7 @@ exports.createTransaction = async (req, res) => {
       yield: data.yield || null,
       portfolio: data.portfolio || null,
       strategy: data.strategy || null,
-      currency: data.currency || null,
+      currency: data.currency || 'LKR', // Default to LKR if currency not provided
       transaction_code: data.transactionCode || null,
       commission: data.commission || null,
       brokerage: data.brokerage || null,
@@ -96,6 +96,54 @@ exports.createTransaction = async (req, res) => {
       user: data.user || null,
       authorization_status: data.authorization_status || 'pending'
     };
+    
+    // Check if transaction would exceed counterparty limits
+    if (transactionPayload.counterparty_id) {
+      // First, get the counterparty type (individual or joint)
+      const counterpartyResult = await Transaction.getCounterpartyType(transactionPayload.counterparty_id);
+      if (!counterpartyResult) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Invalid counterparty ID' 
+        });
+      }
+      
+      // Import the LimitSetup model
+      const LimitSetup = require('../models/limitSetupModel');
+      
+      // Get the product type for this transaction
+      const [transactionTypeRow] = await Transaction.getTransactionTypeById(transactionPayload.transaction_type_id);
+      if (!transactionTypeRow) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid transaction type ID'
+        });
+      }
+      
+      // Check if the transaction would exceed limits
+      const limitCheck = await LimitSetup.checkTransactionLimit(
+        transactionPayload.counterparty_id,
+        counterpartyResult.type,
+        transactionTypeRow.product_type || 'transaction', // Default to 'transaction' if product_type not set
+        transactionPayload.amount,
+        transactionPayload.currency
+      );
+      
+      // If limit check fails, return error and don't create the transaction
+      if (!limitCheck.allowed) {
+        return res.status(400).json({
+          success: false,
+          message: 'Transaction limit exceeded',
+          details: limitCheck.message,
+          limitDetails: {
+            currentExposure: limitCheck.currentExposure,
+            limit: limitCheck.limit,
+            exceededAmount: limitCheck.exceededAmount
+          }
+        });
+      }
+    }
+    
     // Create the transaction
     const newTransaction = await Transaction.create(transactionPayload);
     res.status(201).json({ success: true, data: newTransaction });

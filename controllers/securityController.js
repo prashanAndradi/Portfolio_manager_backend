@@ -3,7 +3,7 @@ const Security = require('../models/securityModel');
 exports.getAllSecurities = (req, res) => {
   Security.getAll((err, results) => {
     if (err) return res.status(500).json({ error: err });
-    res.json(results);
+    res.json({ data: results });
   });
 };
 

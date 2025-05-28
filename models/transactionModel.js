@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const Accounting = require('./accountingModel');
+const Counterparty = require('./counterpartyModel');
 
 class Transaction {
   // Get all transactions with joined account information
@@ -14,12 +15,24 @@ class Transaction {
         ORDER BY t.date DESC, t.id DESC
       `);
       
-      // Manually add placeholder data for missing tables
-      const enhancedRows = rows.map(tx => ({
-        ...tx,
-        security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
-        counterparty_name: tx.counterparty_id ? `Counterparty #${tx.counterparty_id}` : 'N/A',
-        transaction_type_name: tx.transaction_type_id ? `Trans Type #${tx.transaction_type_id}` : 'N/A'
+      // Attach real counterparty name and type from master
+      const enhancedRows = await Promise.all(rows.map(async tx => {
+        let counterparty_name = 'N/A';
+        let counterparty_type = 'N/A';
+        if (tx.counterparty_id) {
+          const cp = await Counterparty.getById(tx.counterparty_id);
+          if (cp) {
+            counterparty_name = cp.name;
+            counterparty_type = cp.type;
+          }
+        }
+        return {
+          ...tx,
+          security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
+          counterparty_name,
+          counterparty_type,
+          transaction_type_name: tx.transaction_type_id ? `Trans Type #${tx.transaction_type_id}` : 'N/A'
+        };
       }));
       
       return enhancedRows;
@@ -41,12 +54,24 @@ class Transaction {
         ORDER BY t.date DESC, t.id DESC
       `, [accountId]);
       
-      // Manually add placeholder data for missing tables
-      const enhancedRows = rows.map(tx => ({
-        ...tx,
-        security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
-        counterparty_name: tx.counterparty_id ? `Counterparty #${tx.counterparty_id}` : 'N/A',
-        transaction_type_name: tx.transaction_type_id ? `Trans Type #${tx.transaction_type_id}` : 'N/A'
+      // Attach real counterparty name and type from master
+      const enhancedRows = await Promise.all(rows.map(async tx => {
+        let counterparty_name = 'N/A';
+        let counterparty_type = 'N/A';
+        if (tx.counterparty_id) {
+          const cp = await Counterparty.getById(tx.counterparty_id);
+          if (cp) {
+            counterparty_name = cp.name;
+            counterparty_type = cp.type;
+          }
+        }
+        return {
+          ...tx,
+          security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
+          counterparty_name,
+          counterparty_type,
+          transaction_type_name: tx.transaction_type_id ? `Trans Type #${tx.transaction_type_id}` : 'N/A'
+        };
       }));
       
       return enhancedRows;
@@ -71,14 +96,23 @@ class Transaction {
         return null;
       }
       
-      // Manually add placeholder data for missing tables
+      // Attach real counterparty name and type from master
+      let counterparty_name = 'N/A';
+      let counterparty_type = 'N/A';
+      if (rows[0].counterparty_id) {
+        const cp = await Counterparty.getById(rows[0].counterparty_id);
+        if (cp) {
+          counterparty_name = cp.name;
+          counterparty_type = cp.type;
+        }
+      }
       const enhancedTx = {
         ...rows[0],
         security_name: rows[0].security_id ? `Security #${rows[0].security_id}` : 'N/A',
-        counterparty_name: rows[0].counterparty_id ? `Counterparty #${rows[0].counterparty_id}` : 'N/A',
+        counterparty_name,
+        counterparty_type,
         transaction_type_name: rows[0].transaction_type_id ? `Trans Type #${rows[0].transaction_type_id}` : 'N/A'
       };
-      
       return enhancedTx;
     } catch (error) {
       throw error;
@@ -444,12 +478,24 @@ class Transaction {
         LIMIT ?
       `, [limit]);
       
-      // Manually add placeholder data for missing tables
-      const enhancedRows = rows.map(tx => ({
-        ...tx,
-        security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
-        counterparty_name: tx.counterparty_id ? `Counterparty #${tx.counterparty_id}` : 'N/A',
-        transaction_type_name: tx.transaction_type_id ? `Trans Type #${tx.transaction_type_id}` : 'N/A'
+      // Attach real counterparty name and type from master
+      const enhancedRows = await Promise.all(rows.map(async tx => {
+        let counterparty_name = 'N/A';
+        let counterparty_type = 'N/A';
+        if (tx.counterparty_id) {
+          const cp = await Counterparty.getById(tx.counterparty_id);
+          if (cp) {
+            counterparty_name = cp.name;
+            counterparty_type = cp.type;
+          }
+        }
+        return {
+          ...tx,
+          security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
+          counterparty_name,
+          counterparty_type,
+          transaction_type_name: tx.transaction_type_id ? `Trans Type #${tx.transaction_type_id}` : 'N/A'
+        };
       }));
       
       return enhancedRows;
@@ -458,5 +504,48 @@ class Transaction {
     }
   }
 }
+
+// Add these methods outside the class declaration
+Transaction.getCounterpartyType = async function(counterpartyId) {
+  try {
+    // First check if it's an individual counterparty
+    let [rows] = await db.query(
+      'SELECT id, "individual" as type FROM counterparty_master_individual WHERE id = ?',
+      [counterpartyId]
+    );
+    
+    if (rows.length > 0) {
+      return rows[0];
+    }
+    
+    // If not found, check if it's a joint counterparty
+    [rows] = await db.query(
+      'SELECT id, "joint" as type FROM counterparty_master_joint WHERE id = ?',
+      [counterpartyId]
+    );
+    
+    if (rows.length > 0) {
+      return rows[0];
+    }
+    
+    return null; // Counterparty not found
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Get transaction type information by ID
+Transaction.getTransactionTypeById = async function(transactionTypeId) {
+  try {
+    const [rows] = await db.query(
+      'SELECT * FROM transaction_types WHERE id = ?',
+      [transactionTypeId]
+    );
+    
+    return rows;
+  } catch (error) {
+    throw error;
+  }
+};
 
 module.exports = Transaction; 

@@ -5,6 +5,21 @@ const Gsec = require('../models/gsec');
 
 module.exports = {
   /**
+   * Get all coupon months/days (MM/DD) for a given ISIN
+   * GET /api/isin-master/:isin/coupon-months
+   */
+  getCouponMonths: (req, res) => {
+    const isin = req.params.isin;
+    if (!isin) {
+      return res.status(400).json({ success: false, error: 'ISIN is required' });
+    }
+    IsinCouponSchedule.getCouponMonths(isin, (err, months) => {
+      if (err) return res.status(500).json({ success: false, error: err.message });
+      res.json({ success: true, data: months });
+    });
+  },
+
+  /**
    * Get previous and next coupon dates for a given ISIN and value date
    * GET /api/isin-master/:isin/coupon-dates?valueDate=YYYY-MM-DD
    */

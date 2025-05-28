@@ -1,21 +1,27 @@
-const db = require('../db');
+const pool = require('../config/db');
 
-const Counterparty = {
-  getAll: (callback) => {
-    db.query('SELECT * FROM counterparties', callback);
-  },
-  getById: (id, callback) => {
-    db.query('SELECT * FROM counterparties WHERE id = ?', [id], callback);
-  },
-  create: (counterparty, callback) => {
-    db.query('INSERT INTO counterparties (name, type, contact_info) VALUES (?, ?, ?)', [counterparty.name, counterparty.type, counterparty.contact_info], callback);
-  },
-  update: (id, counterparty, callback) => {
-    db.query('UPDATE counterparties SET name = ?, type = ?, contact_info = ? WHERE id = ?', [counterparty.name, counterparty.type, counterparty.contact_info, id], callback);
-  },
-  delete: (id, callback) => {
-    db.query('DELETE FROM counterparties WHERE id = ?', [id], callback);
-  }
+// Get all counterparties from both individual and joint tables
+async function getAll() {
+  const sql = `
+    SELECT id, short_name AS name, 'individual' AS type FROM counterparty_master_individual
+    UNION ALL
+    SELECT id, short_name AS name, 'joint' AS type FROM counterparty_master_joint
+    ORDER BY name
+  `;
+  const [rows] = await pool.query(sql);
+  return rows;
+}
+
+// Get a single counterparty by id from either table
+async function getById(id) {
+  const [individual] = await pool.query('SELECT id, short_name AS name, "individual" AS type FROM counterparty_master_individual WHERE id = ?', [id]);
+  if (individual.length > 0) return individual[0];
+  const [joint] = await pool.query('SELECT id, short_name AS name, "joint" AS type FROM counterparty_master_joint WHERE id = ?', [id]);
+  if (joint.length > 0) return joint[0];
+  return null;
+}
+
+module.exports = {
+  getAll,
+  getById
 };
-
-module.exports = Counterparty;
