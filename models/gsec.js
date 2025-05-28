@@ -42,7 +42,8 @@ const Gsec = {
     
     // First check if this would exceed the counterparty limit
     if (data.counterparty) {
-      this.checkGsecLimit(data, (err, limitCheck) => {
+      // Use direct reference to the function, not through 'this'
+      Gsec.checkGsecLimit(data, (err, limitCheck) => {
         if (err) {
           return callback(err);
         }
