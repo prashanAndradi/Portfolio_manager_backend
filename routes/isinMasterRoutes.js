@@ -13,7 +13,16 @@ router.get('/:isin/coupon-dates', isinMasterController.getCouponDates);
 // Get all coupon months/days (MM/DD) for an ISIN
 router.get('/:isin/coupon-months', isinMasterController.getCouponMonths);
 
-// Save Gsec transaction
+// Gsec transaction routes
 router.post('/gsec', isinMasterController.saveGsec);
+
+// Get recent Gsec transactions
+router.get('/gsec/recent', isinMasterController.getRecentGsecTransactions);
+
+// Update Gsec transaction
+router.put('/gsec/:id', isinMasterController.updateGsecTransaction);
+
+// Update Gsec transaction status (approve/reject)
+router.put('/gsec/:id/status', isinMasterController.updateGsecTransactionStatus);
 
 module.exports = router;
