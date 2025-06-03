@@ -83,35 +83,39 @@ module.exports = {
       }
     });
   },
-  getAllIsins: (req, res) => {
-    IsinMaster.getAll((err, results) => {
-      if (err) return res.status(500).json({ success: false, error: err });
+  getAllIsins: async (req, res) => {
+    try {
+      const results = await IsinMaster.getAll();
       res.json({ success: true, data: results });
-    });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message || err });
+    }
   },
-  searchIsins: (req, res) => {
+  searchIsins: async (req, res) => {
     const query = req.query.query;
     if (!query) {
       console.error('No query parameter provided');
       return res.status(400).json({ success: false, error: 'Query parameter is required' });
     }
     console.log('Searching ISINs for query:', query);
-    IsinMaster.searchByIsin(query, (err, results) => {
-      if (err) {
-        console.error('Error searching ISINs:', err);
-        return res.status(500).json({ success: false, error: err.message || 'Internal server error' });
-      }
+    try {
+      const results = await IsinMaster.searchByIsin(query);
       console.log('Found ISINs:', results);
       res.json({ success: true, data: results });
-    });
+    } catch (err) {
+      console.error('Error searching ISINs:', err);
+      res.status(500).json({ success: false, error: err.message || 'Internal server error' });
+    }
   },
-  getIsinById: (req, res) => {
+  getIsinById: async (req, res) => {
     const id = req.params.id;
-    IsinMaster.getById(id, (err, result) => {
-      if (err) return res.status(500).json({ success: false, error: err });
-      if (!result || result.length === 0) return res.status(404).json({ success: false, error: 'ISIN not found' });
-      res.json({ success: true, data: result[0] });
-    });
+    try {
+      const result = await IsinMaster.getById(id);
+      if (!result) return res.status(404).json({ success: false, error: 'ISIN not found' });
+      res.json({ success: true, data: result });
+    } catch (err) {
+      res.status(500).json({ success: false, error: err.message || err });
+    }
   },
   /**
    * Save Gsec transaction to gsec table

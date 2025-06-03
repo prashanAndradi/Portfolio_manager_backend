@@ -81,10 +81,10 @@ class Accounting {
         // Debit entry (Asset increase)
         await conn.query(`
           INSERT INTO ledger_entries 
-          (transaction_id, account_id, entry_date, debit_amount, credit_amount, currency, description)
+          (deal_number, account_id, entry_date, debit_amount, credit_amount, currency, description)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
-          transaction.id,
+          transaction.deal_number,
           destinationAccountId,
           date,
           absAmount,
@@ -96,10 +96,10 @@ class Accounting {
         // Credit entry (Revenue)
         await conn.query(`
           INSERT INTO ledger_entries 
-          (transaction_id, account_id, entry_date, debit_amount, credit_amount, currency, description)
+          (deal_number, account_id, entry_date, debit_amount, credit_amount, currency, description)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
-          transaction.id,
+          transaction.deal_number,
           sourceAccountId,
           date,
           0,
@@ -111,10 +111,10 @@ class Accounting {
         // Debit entry (Expense)
         await conn.query(`
           INSERT INTO ledger_entries 
-          (transaction_id, account_id, entry_date, debit_amount, credit_amount, currency, description)
+          (deal_number, account_id, entry_date, debit_amount, credit_amount, currency, description)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
-          transaction.id,
+          transaction.deal_number,
           destinationAccountId,
           date,
           absAmount,
@@ -126,10 +126,10 @@ class Accounting {
         // Credit entry (Asset decrease)
         await conn.query(`
           INSERT INTO ledger_entries 
-          (transaction_id, account_id, entry_date, debit_amount, credit_amount, currency, description)
+          (deal_number, account_id, entry_date, debit_amount, credit_amount, currency, description)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `, [
-          transaction.id,
+          transaction.deal_number,
           sourceAccountId,
           date,
           0,

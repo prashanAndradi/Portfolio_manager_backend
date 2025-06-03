@@ -9,10 +9,13 @@ class Transaction {
       const [rows] = await db.query(`
         SELECT 
           t.*,
-          a.name as source_account
+          a.name as source_account,
+          u.username as user_name,
+          u.id as user_id
         FROM transactions t
         LEFT JOIN accounts a ON t.source_account_id = a.id
-        ORDER BY t.date DESC, t.id DESC
+        LEFT JOIN users u ON t.user = u.id
+        ORDER BY t.date DESC, t.deal_number DESC
       `);
       
       // Attach real counterparty name and type from master
@@ -28,6 +31,8 @@ class Transaction {
         }
         return {
           ...tx,
+          user_name: tx.user_name || null,
+          user_id: tx.user_id || null,
           security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
           counterparty_name,
           counterparty_type,
@@ -51,7 +56,7 @@ class Transaction {
         FROM transactions t
         LEFT JOIN accounts a ON t.source_account_id = a.id
         WHERE t.source_account_id = ?
-        ORDER BY t.date DESC, t.id DESC
+        ORDER BY t.date DESC, t.deal_number DESC
       `, [accountId]);
       
       // Attach real counterparty name and type from master
@@ -67,6 +72,8 @@ class Transaction {
         }
         return {
           ...tx,
+          user_name: tx.user_name || null,
+          user_id: tx.user_id || null,
           security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
           counterparty_name,
           counterparty_type,
@@ -86,10 +93,13 @@ class Transaction {
       const [rows] = await db.query(`
         SELECT 
           t.*,
-          a.name as source_account
+          a.name as source_account,
+          u.username as user_name,
+          u.id as user_id
         FROM transactions t
         LEFT JOIN accounts a ON t.source_account_id = a.id
-        WHERE t.id = ?
+        LEFT JOIN users u ON t.user = u.id
+        WHERE t.deal_number = ?
       `, [id]);
       
       if (rows.length === 0) {
@@ -133,7 +143,7 @@ class Transaction {
         const randomSuffix = Math.floor(1000 + Math.random() * 9000); // 4-digit random
         dealNumber = `DEAL${dateStr}-${randomSuffix}`;
         // Check uniqueness
-        const [rows] = await connection.query('SELECT id FROM transactions WHERE deal_number = ?', [dealNumber]);
+        const [rows] = await connection.query('SELECT deal_number FROM transactions WHERE deal_number = ?', [dealNumber]);
         exists = rows.length > 0;
         tryCount++;
         if (tryCount > 10) throw new Error('Could not generate unique deal number');
@@ -441,7 +451,7 @@ class Transaction {
       
       // Get transaction to adjust account balance
       const [transactionRows] = await connection.query(
-        'SELECT amount, source_account_id FROM transactions WHERE id = ?',
+        'SELECT amount, source_account_id FROM transactions WHERE deal_number = ?',
         [id]
       );
       
@@ -460,7 +470,7 @@ class Transaction {
       }
       
       // Delete the transaction
-      await connection.query('DELETE FROM transactions WHERE id = ?', [id]);
+      await connection.query('DELETE FROM transactions WHERE deal_number = ?', [id]);
       
       // Reverse the account balance adjustment
       await connection.query(
@@ -488,7 +498,7 @@ class Transaction {
           a.name as source_account
         FROM transactions t
         LEFT JOIN accounts a ON t.source_account_id = a.id
-        ORDER BY t.date DESC, t.id DESC
+        ORDER BY t.date DESC, t.deal_number DESC
         LIMIT ?
       `, [limit]);
       
@@ -505,6 +515,8 @@ class Transaction {
         }
         return {
           ...tx,
+          user_name: tx.user_name || null,
+          user_id: tx.user_id || null,
           security_name: tx.security_id ? `Security #${tx.security_id}` : 'N/A',
           counterparty_name,
           counterparty_type,

@@ -41,13 +41,13 @@ exports.getTransactionsByAccountId = async (req, res) => {
 // Get transaction by ID
 exports.getTransactionById = async (req, res) => {
   try {
-    const id = req.params.id;
-    const transaction = await Transaction.getById(id);
+    const deal_number = req.params.deal_number;
+    const transaction = await Transaction.getById(deal_number);
     
     if (!transaction) {
       return res.status(404).json({
         success: false,
-        message: `Transaction with id ${id} not found`
+        message: `Transaction with deal_number ${deal_number} not found`
       });
     }
     
@@ -71,103 +71,69 @@ exports.createTransaction = async (req, res) => {
   try {
     // Map frontend fields to DB columns
     const data = req.body;
+    // Ensure date is always set (default to today if missing)
+    const today = new Date().toISOString().split('T')[0];
     const transactionPayload = {
       sourceAccount: data.sourceAccount,
-      category: data.category || data.transactionType, // fallback for old/new frontend
+      category: data.category || data.transaction_type_id, // fallback for old/new frontend
       amount: parseFloat(data.amount),
-      date: data.date,
+      date: data.date || today,
       description: data.description || null,
       tradeDate: data.tradeDate || null,
       valueDate: data.valueDate || null,
-      security_id: data.security || null,
-      interest_rate: data.interestRate || null,
-      counterparty_id: data.counterparty || null,
-      transaction_type_id: data.transactionType || null,
-      settlement_mode: data.settlementMode || null,
+      security_id: data.security_id || null,
+      interest_rate: data.interest_rate || null,
+      counterparty_id: data.counterparty_id || null,
+      transaction_type_id: data.transaction_type_id || null,
+      settlement_mode: data.settlement_mode || null,
       price: data.price || null,
       yield: data.yield || null,
       portfolio: data.portfolio || null,
       strategy: data.strategy || null,
       currency: data.currency || 'LKR', // Default to LKR if currency not provided
-      transaction_code: data.transactionCode || null,
+      transaction_code: data.transaction_code || null,
       commission: data.commission || null,
       brokerage: data.brokerage || null,
       remarks: data.remarks || null,
-      user: data.user || null,
-      authorization_status: data.authorization_status || 'pending'
+      user: data.initiator || null,
+      status: 'pending',
+      deal_number: data.deal_number
     };
+
+    console.log('Mapped transaction payload:', transactionPayload);
+
+    const transaction = await Transaction.create(transactionPayload);
     
-    // Check if transaction would exceed counterparty limits
-    if (transactionPayload.counterparty_id) {
-      // First, get the counterparty type (individual or joint)
-      const counterpartyResult = await Transaction.getCounterpartyType(transactionPayload.counterparty_id);
-      if (!counterpartyResult) {
-        return res.status(400).json({ 
-          success: false, 
-          message: 'Invalid counterparty ID' 
-        });
-      }
-      
-      // Import the LimitSetup model
-      const LimitSetup = require('../models/limitSetupModel');
-      
-      // Get the product type for this transaction
-      const [transactionTypeRow] = await Transaction.getTransactionTypeById(transactionPayload.transaction_type_id);
-      if (!transactionTypeRow) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid transaction type ID'
-        });
-      }
-      
-      // Check if the transaction would exceed limits
-      const limitCheck = await LimitSetup.checkTransactionLimit(
-        transactionPayload.counterparty_id,
-        counterpartyResult.type,
-        transactionTypeRow.product_type || 'transaction', // Default to 'transaction' if product_type not set
-        transactionPayload.amount,
-        transactionPayload.currency
-      );
-      
-      // If limit check fails, return error and don't create the transaction
-      if (!limitCheck.allowed) {
-        return res.status(400).json({
-          success: false,
-          message: 'Transaction limit exceeded',
-          details: limitCheck.message,
-          limitDetails: {
-            currentExposure: limitCheck.currentExposure,
-            limit: limitCheck.limit,
-            exceededAmount: limitCheck.exceededAmount
-          }
-        });
-      }
-    }
-    
-    // Create the transaction
-    const newTransaction = await Transaction.create(transactionPayload);
-    res.status(201).json({ success: true, data: newTransaction });
+    res.status(201).json({
+      success: true,
+      message: 'Transaction created successfully',
+      data: transaction
+    });
   } catch (error) {
     console.error('Error creating transaction:', error);
-    res.status(500).json({ success: false, message: 'Failed to create transaction', error: error.message });
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create transaction',
+      error: error.message
+    });
   }
 };
 
 // Update transaction
 exports.updateTransaction = async (req, res) => {
   try {
-    const id = req.params.id;
+    const deal_number = req.params.deal_number;
     const data = req.body;
     
     // Get user from request or headers
     const user = req.user || JSON.parse(req.headers['x-user-data'] || '{}');
     
     // Check if transaction exists
-    const transaction = await Transaction.getById(id);
+    const transaction = await Transaction.getById(deal_number);
     if (!transaction) {
       return res.status(404).json({
         success: false,
-        message: `Transaction with id ${id} not found`
+        message: `Transaction with deal_number ${deal_number} not found`
       });
     }
     
@@ -231,7 +197,7 @@ exports.updateTransaction = async (req, res) => {
         });
       }
       // Update the transaction
-      const updatedTransaction = await Transaction.update(id, data);
+      const updatedTransaction = await Transaction.update(deal_number, data);
       
       return res.status(200).json({
         success: true,
@@ -252,18 +218,18 @@ exports.updateTransaction = async (req, res) => {
 // Delete transaction
 exports.deleteTransaction = async (req, res) => {
   try {
-    const id = req.params.id;
+    const deal_number = req.params.deal_number;
     
     // Check if transaction exists
-    const transaction = await Transaction.getById(id);
+    const transaction = await Transaction.getById(deal_number);
     if (!transaction) {
       return res.status(404).json({
         success: false,
-        message: `Transaction with id ${id} not found`
+        message: `Transaction with deal_number ${deal_number} not found`
       });
     }
     
-    await Transaction.delete(id);
+    await Transaction.delete(deal_number);
     
     res.status(200).json({
       success: true,

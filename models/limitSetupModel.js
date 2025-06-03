@@ -51,7 +51,12 @@ const LimitSetup = {
       AND (currency = ? OR currency IS NULL OR currency = '')
     `;
     const [rows] = await db.query(sql, [counterpartyId, counterpartyType, currency]);
-    return rows[0];
+    const row = rows[0];
+    if (!row) return undefined;
+    // If all relevant fields are null, treat as no limits
+    const allFieldsNull = Object.values(row).every(v => v === null);
+    if (allFieldsNull) return undefined;
+    return row;
   },
 
   // Check if a transaction would exceed product-specific or overall limits
@@ -60,9 +65,10 @@ const LimitSetup = {
     const limits = await LimitSetup.getLimitsByCounterparty(counterpartyId, counterpartyType, currency);
     
     if (!limits) {
-      return { 
-        allowed: false, 
-        message: 'No limits configured for this counterparty and currency' 
+      console.log('[LimitCheck] No limits found for', { counterpartyId, counterpartyType, productType, currency, amount });
+      return {
+        allowed: true,
+        message: 'No limits configured for this counterparty/product/currency, allowing transaction by default.'
       };
     }
     
@@ -85,6 +91,7 @@ const LimitSetup = {
     
     // Check product-specific limit
     let productLimitField = '';
+    console.log('[LimitCheck] Limits found:', limits);
     switch (productType) {
       case 'transaction':
         productLimitField = 'product_transaction_limit';
@@ -114,26 +121,37 @@ const LimitSetup = {
         productLimitField = 'product_buy_and_sell_back_limit';
         break;
       default:
-        return { 
-          allowed: false, 
-          message: 'Unknown product type' 
+        console.log('[LimitCheck] Unknown product type:', productType, '- allowing transaction by default.');
+        return {
+          allowed: true,
+          message: 'Unknown product type, allowing transaction by default.'
         };
     }
     
+    // If no limits are set for this counterparty/product/currency, allow unlimited
+    if (!limits) {
+      console.log('[LimitCheck] No limits found for', { counterpartyId, counterpartyType, productType, currency, amount });
+      return {
+        allowed: true,
+        message: 'No limits configured for this counterparty/product/currency, allowing transaction by default.'
+      };
+    }
+
     const productLimit = parseFloat(limits[productLimitField] || 0);
     const overallLimit = parseFloat(limits.overall_exposure_limit || 0);
+    console.log('[LimitCheck] Product/Overall Limits:', { productLimitField, productLimit, overallLimit, currentProductExposure, currentOverallExposure, amount });
     
     // Check if adding the new amount would exceed either limit
     const newProductExposure = currentProductExposure + parseFloat(amount);
     const newOverallExposure = currentOverallExposure + parseFloat(amount);
-    
-    if (productLimit > 0 && newProductExposure > productLimit) {
+    if ((productLimit > 0 && newProductExposure > productLimit) || (overallLimit > 0 && newOverallExposure > overallLimit)) {
+      console.log('[LimitCheck] Transaction limit exceeded', { newProductExposure, productLimit, newOverallExposure, overallLimit });
       return {
         allowed: false,
-        message: `Transaction exceeds ${productType} limit (${newProductExposure} > ${productLimit})`,
-        currentExposure: currentProductExposure,
-        limit: productLimit,
-        exceededAmount: newProductExposure - productLimit
+        message: 'Transaction limit exceeded',
+        currentExposure: { product: currentProductExposure, overall: currentOverallExposure },
+        limit: { product: productLimit, overall: overallLimit },
+        exceededAmount: { product: newProductExposure - productLimit, overall: newOverallExposure - overallLimit }
       };
     }
     

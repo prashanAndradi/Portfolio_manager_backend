@@ -1,4 +1,4 @@
-const db = require('../db');
+const db = require('../config/db');
 
 const IsinMaster = {
   create: (data, callback) => {
@@ -16,15 +16,18 @@ const IsinMaster = {
       data.currency
     ], callback);
   },
-  getAll: (callback) => {
-    db.query('SELECT * FROM isin_master', callback);
+  getAll: async () => {
+    const [results] = await db.query('SELECT * FROM isin_master');
+    return results;
   },
-  searchByIsin: (query, callback) => {
+  searchByIsin: async (query) => {
     const sql = 'SELECT isin_number FROM isin_master WHERE isin_number LIKE ? LIMIT 10';
-    db.query(sql, [`%${query}%`], callback);
+    const [results] = await db.query(sql, [`%${query}%`]);
+    return results;
   },
-  getById: (id, callback) => {
-    db.query('SELECT * FROM isin_master WHERE id = ?', [id], callback);
+  getById: async (id) => {
+    const [results] = await db.query('SELECT * FROM isin_master WHERE id = ?', [id]);
+    return results[0];
   },
 
 };
