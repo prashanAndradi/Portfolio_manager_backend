@@ -125,17 +125,31 @@ class Transaction {
     
     try {
       await connection.beginTransaction();
-      
+      // Generate unique deal number
+      let dealNumber, exists = true, tryCount = 0;
+      do {
+        const today = new Date();
+        const dateStr = today.toISOString().slice(0,10).replace(/-/g, '');
+        const randomSuffix = Math.floor(1000 + Math.random() * 9000); // 4-digit random
+        dealNumber = `DEAL${dateStr}-${randomSuffix}`;
+        // Check uniqueness
+        const [rows] = await connection.query('SELECT id FROM transactions WHERE deal_number = ?', [dealNumber]);
+        exists = rows.length > 0;
+        tryCount++;
+        if (tryCount > 10) throw new Error('Could not generate unique deal number');
+      } while (exists);
       // Insert transaction with new fields
       const [result] = await connection.query(
         `INSERT INTO transactions (
+          deal_number,
           source_account_id, category, amount, date, description, 
           trade_date, value_date, security_id, interest_rate, 
           counterparty_id, transaction_type_id, settlement_mode, price, 
           yield, portfolio, strategy, currency, transaction_code, 
           commission, brokerage, remarks, user, status, comment
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
         [
+          dealNumber,
           transaction.sourceAccount,
           transaction.category,
           transaction.amount,

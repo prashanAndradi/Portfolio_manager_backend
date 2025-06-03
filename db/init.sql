@@ -26,10 +26,3 @@ CREATE TABLE transactions (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (source_account_id) REFERENCES accounts(id)
 );
-
--- Insert some default accounts
-INSERT INTO accounts (name, type, balance) VALUES
-('Cash', 'Cash', 0.00),
-('Checking Account', 'Bank', 0.00),
-('Savings Account', 'Bank', 0.00),
-('Credit Card', 'Credit', 0.00); 

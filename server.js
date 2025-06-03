@@ -32,8 +32,10 @@ const isinMasterRoutes = require('./routes/isinMasterRoutes');
 const counterpartyIndividualRoutes = require('./routes/counterpartyIndividualRoutes');
 const counterpartyJointRoutes = require('./routes/counterpartyJointRoutes');
 const limitStatusRoutes = require('./routes/limitStatusRoutes');
+const indexRoutes = require('./routes/index');
 
 // Use routes
+app.use('/api', indexRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/transaction-types', transactionTypeRoutes);
 app.use('/api/securities', securityRoutes);
@@ -47,6 +49,10 @@ app.use('/api', counterpartyIndividualRoutes);
 app.use('/api', counterpartyJointRoutes);
 app.use('/api', require('./routes/limitSetupRoutes'));
 app.use('/api/limits', limitStatusRoutes);
+
+// Portfolio Master API
+app.use('/api', require('./routes/index'));
+
 
 // Add a direct register endpoint that will definitely work
 app.post('/api/auth/register', async (req, res) => {
