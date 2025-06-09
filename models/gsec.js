@@ -154,9 +154,10 @@ const Gsec = {
       );
       
       if (!limitRows || limitRows.length === 0) {
+        // Allow transaction if no limits are configured
         return {
-          allowed: false,
-          message: 'No limits configured for this counterparty and currency'
+          allowed: true,
+          message: 'No limits configured for this counterparty and currency, allowing transaction.'
         };
       }
       
@@ -423,6 +424,15 @@ const Gsec = {
       throw error;
     }
   }
+};
+
+Gsec.getLatestDealNumber = async (date) => {
+  // Find the latest deal_number for Gsec transactions on or before the given date
+  const [results] = await db.query(
+    'SELECT deal_number FROM gsec WHERE trade_date <= ? ORDER BY trade_date DESC, id DESC LIMIT 1',
+    [date]
+  );
+  return results[0] ? results[0].deal_number : null;
 };
 
 module.exports = Gsec;

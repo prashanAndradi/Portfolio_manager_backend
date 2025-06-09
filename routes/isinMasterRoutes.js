@@ -19,6 +19,9 @@ router.post('/gsec', isinMasterController.saveGsec);
 // Get recent Gsec transactions
 router.get('/gsec/recent', isinMasterController.getRecentGsecTransactions);
 
+// Get latest deal number for Gsec transactions up to a given date
+router.get('/gsec-latest-deal-number', isinMasterController.getGsecLatestDealNumber);
+
 // Update Gsec transaction
 router.put('/gsec/:id', isinMasterController.updateGsecTransaction);
 

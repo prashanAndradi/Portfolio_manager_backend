@@ -25,18 +25,21 @@ const IsinCouponSchedule = {
       for (let i = 0; i < results.length; i++) {
         const dateStr = results[i].coupon_date;
         const dateObj = new Date(dateStr);
-        if (dateObj < valueDateObj) previousCouponDate = dateStr;
+        if (dateObj <= valueDateObj) previousCouponDate = dateStr;
         if (dateObj > valueDateObj && nextCouponDate === null) {
           nextCouponDate = dateStr;
           break;
         }
-        if (dateObj.getTime() === valueDateObj.getTime()) {
-          // If valueDate exactly matches a coupon date, treat it as the previous coupon
-          previousCouponDate = dateStr;
-          // nextCouponDate is the next one in the list (if any)
-          if (i + 1 < results.length) nextCouponDate = results[i + 1].coupon_date;
-          break;
-        }
+      }
+      // If valueDate is before the first coupon date
+      if (!previousCouponDate) {
+        previousCouponDate = results[0].coupon_date;
+        nextCouponDate = results[1] ? results[1].coupon_date : null;
+      }
+      // If valueDate is after the last coupon date
+      if (!nextCouponDate) {
+        previousCouponDate = results[results.length - 2] ? results[results.length - 2].coupon_date : results[results.length - 1].coupon_date;
+        nextCouponDate = results[results.length - 1].coupon_date;
       }
       callback(null, { previousCouponDate, nextCouponDate });
     });

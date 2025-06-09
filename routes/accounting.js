@@ -195,7 +195,7 @@ router.get('/general-ledger', auth, async (req, res) => {
       FROM ledger_entries le
       JOIN chart_of_accounts coa ON le.account_id = coa.id
       JOIN account_types at ON coa.account_type_id = at.id
-      LEFT JOIN transactions t ON le.transaction_id = t.id
+      LEFT JOIN transactions t ON le.deal_number = t.deal_number
       WHERE 1=1
     `;
     
@@ -207,7 +207,7 @@ router.get('/general-ledger', auth, async (req, res) => {
       FROM ledger_entries le
       JOIN chart_of_accounts coa ON le.account_id = coa.id
       JOIN account_types at ON coa.account_type_id = at.id
-      LEFT JOIN transactions t ON le.transaction_id = t.id
+      LEFT JOIN transactions t ON le.deal_number = t.deal_number
       WHERE 1=1
     `;
     
@@ -227,7 +227,7 @@ router.get('/general-ledger', auth, async (req, res) => {
     }
     
     if (transactionId) {
-      whereClause += ` AND le.transaction_id = ?`;
+      whereClause += ` AND le.deal_number = ?`;
     }
     
     // Execute count query
@@ -283,10 +283,10 @@ router.post('/ledger-entries', auth, async (req, res) => {
     const insertPromises = entries.map(entry => {
       return db.query(
         `INSERT INTO ledger_entries 
-         (transaction_id, account_id, entry_date, debit_amount, credit_amount, currency, description)
+         (deal_number, account_id, entry_date, debit_amount, credit_amount, currency, description)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
-          entry.transaction_id || null,
+          entry.deal_number || null,
           entry.account_id,
           entry.entry_date,
           entry.debit_amount || 0,

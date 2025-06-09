@@ -5,6 +5,32 @@ const Gsec = require('../models/gsec');
 
 module.exports = {
   /**
+   * Get the latest deal number for Gsec transactions up to a given date
+   * GET /api/isin-master/gsec-latest-deal-number?date=YYYY-MM-DD
+   */
+  getGsecLatestDealNumber: async (req, res) => {
+    try {
+      const { date } = req.query;
+      if (!date) {
+        return res.status(400).json({ error: 'Date is required' });
+      }
+      const latestDealNumber = await Gsec.getLatestDealNumber(date);
+      // Expecting deal number in format YYYYMMDD/GSEC/####
+      let latestSerial = 0;
+      if (latestDealNumber) {
+        const parts = latestDealNumber.split('/');
+        if (parts.length === 3) {
+          const serialStr = parts[2];
+          const serial = parseInt(serialStr, 10);
+          if (!isNaN(serial)) latestSerial = serial;
+        }
+      }
+      res.json({ latestSerial });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  },
+  /**
    * Get all coupon months/days (MM/DD) for a given ISIN
    * GET /api/isin-master/:isin/coupon-months
    */

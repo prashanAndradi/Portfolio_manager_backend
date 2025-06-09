@@ -46,6 +46,7 @@ app.use('/api/transactions', transactionRoutes);
 app.use('/api/accounting', accountingRoutes);
 app.use('/api/isin-master', isinMasterRoutes);
 app.use('/api', counterpartyIndividualRoutes);
+app.use('/api/brokers', require('./routes/brokerRoutes'));
 app.use('/api', counterpartyJointRoutes);
 app.use('/api', require('./routes/limitSetupRoutes'));
 app.use('/api/limits', limitStatusRoutes);
