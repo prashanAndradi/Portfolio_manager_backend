@@ -1,15 +1,19 @@
 const CounterpartyIndividual = require('../models/counterpartyIndividualModel');
 
-exports.createCounterpartyIndividual = (req, res) => {
-  CounterpartyIndividual.create(req.body, (err, result) => {
-    if (err) return res.status(500).json({ error: err });
+exports.createCounterpartyIndividual = async (req, res) => {
+  try {
+    const result = await CounterpartyIndividual.create(req.body);
     res.status(201).json({ id: result.insertId, ...req.body });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message || err });
+  }
 };
 
-exports.getAllCounterpartyIndividuals = (req, res) => {
-  CounterpartyIndividual.getAll((err, results) => {
-    if (err) return res.status(500).json({ error: err });
+exports.getAllCounterpartyIndividuals = async (req, res) => {
+  try {
+    const results = await CounterpartyIndividual.getAll();
     res.json(results);
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message || err });
+  }
 };

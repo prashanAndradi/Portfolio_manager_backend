@@ -33,12 +33,14 @@ const counterpartyIndividualRoutes = require('./routes/counterpartyIndividualRou
 const counterpartyJointRoutes = require('./routes/counterpartyJointRoutes');
 const limitStatusRoutes = require('./routes/limitStatusRoutes');
 const indexRoutes = require('./routes/index');
+const moneyMarketDealsRoutes = require('./routes/moneyMarketDeals');
 
 // Use routes
 app.use('/api', indexRoutes);
 app.use('/api/accounts', accountRoutes);
 app.use('/api/transaction-types', transactionTypeRoutes);
 app.use('/api/securities', securityRoutes);
+app.use('/api/money-market-deals', moneyMarketDealsRoutes);
 app.use('/api/counterparties', counterpartyRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/auth', authRoutes);
