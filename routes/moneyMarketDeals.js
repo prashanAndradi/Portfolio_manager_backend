@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 
-// Import your DB connection (adjust path as needed)
-const pool = require('../db');
+// Import Prisma client
+const prisma = require('../prismaClient');
 
 // POST /api/money-market-deals - Save a new deal
 router.post('/', async (req, res) => {
@@ -16,41 +16,54 @@ router.post('/', async (req, res) => {
     const dateStr = `${yyyy}${mm}${dd}`;
     const productCode = deal.productType;
 
-    // Get max sequence for this date and product
-    const [rows] = await pool.query(
-      'SELECT deal_number FROM money_market_deals WHERE trade_date = ? AND product_type = ? ORDER BY deal_number DESC LIMIT 1',
-      [deal.tradeDate, productCode]
-    );
+    // Get max sequence for this date and product using Prisma
+    const lastDeal = await prisma.money_market_deals.findFirst({
+      where: {
+        trade_date: new Date(deal.tradeDate),
+        product_type: productCode
+      },
+      orderBy: { deal_number: 'desc' },
+      select: { deal_number: true },
+    });
     let nextSeq = 1;
-    if (rows.length > 0) {
-      // Extract the last 4 digits from deal_number
-      const lastDealNumber = rows[0].deal_number;
-      const lastSeq = parseInt(lastDealNumber.slice(-4), 10);
+    if (lastDeal) {
+      const lastSeq = parseInt(lastDeal.deal_number.slice(-4), 10);
       nextSeq = lastSeq + 1;
     }
     const seqStr = String(nextSeq).padStart(4, '0');
     const dealNumber = `${dateStr}${productCode}${seqStr}`;
 
-    const [result] = await pool.query(
-      `INSERT INTO money_market_deals
-      (deal_number, trade_date, value_date, maturity_date, counterparty_id, product_type, currency, principal_amount, interest_rate, tenor, interest_amount, maturity_value, settlement_mode, remarks)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        dealNumber, deal.tradeDate, deal.valueDate, deal.maturityDate, deal.counterpartyId, deal.productType,
-        deal.currency, deal.principalAmount, deal.interestRate, deal.tenor, deal.interestAmount, deal.maturityValue,
-        deal.settlementMode, deal.remarks
-      ]
-    );
-    res.status(201).json({ success: true, message: 'Deal saved', id: result.insertId, dealNumber });
+    // Create new deal using Prisma
+    const result = await prisma.money_market_deals.create({
+      data: {
+        deal_number: dealNumber,
+        trade_date: new Date(deal.tradeDate),
+        value_date: new Date(deal.valueDate),
+        maturity_date: new Date(deal.maturityDate),
+        counterparty_id: deal.counterpartyId,
+        product_type: deal.productType,
+        currency: deal.currency,
+        principal_amount: deal.principalAmount,
+        interest_rate: deal.interestRate,
+        tenor: deal.tenor,
+        interest_amount: deal.interestAmount,
+        maturity_value: deal.maturityValue,
+        settlement_mode: deal.settlementMode,
+        remarks: deal.remarks
+      }
+    });
+    res.status(201).json({ success: true, message: 'Deal saved', id: result.id, dealNumber });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to save deal', error: err.message });
   }
 });
 
-// GET /api/money-market-deals - List all deals (optional)
+// GET /api/money-market-deals - List all deals
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM money_market_deals ORDER BY trade_date DESC');
+    const rows = await prisma.money_market_deals.findMany({
+      orderBy: { trade_date: 'desc' }
+    });
     res.json({ success: true, data: rows });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to fetch deals', error: err.message });

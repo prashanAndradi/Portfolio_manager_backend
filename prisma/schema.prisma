@@ -1,0 +1,412 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model account_types {
+  id                Int                    @id @default(autoincrement())
+  name              String                 @unique(map: "name") @db.VarChar(50)
+  category          account_types_category
+  description       String?                @db.Text
+  created_at        DateTime?              @default(now()) @db.Timestamp(0)
+  chart_of_accounts chart_of_accounts[]
+}
+
+model accounts {
+  id           Int            @id @default(autoincrement())
+  name         String         @db.VarChar(100)
+  type         String         @db.VarChar(50)
+  balance      Decimal?       @default(0.00) @db.Decimal(15, 2)
+  created_at   DateTime?      @default(now()) @db.Timestamp(0)
+  updated_at   DateTime?      @default(now()) @db.Timestamp(0)
+  transactions transactions[] @ignore
+}
+
+model brokers {
+  id                             Int       @id @default(autoincrement())
+  broker_code                    String    @unique(map: "broker_code") @db.VarChar(50)
+  broker_name                    String    @db.VarChar(100)
+  building_number                String?   @db.VarChar(50)
+  street_name                    String?   @db.VarChar(100)
+  street_name2                   String?   @db.VarChar(100)
+  city                           String?   @db.VarChar(100)
+  province                       String?   @db.VarChar(100)
+  zip_code                       String?   @db.VarChar(20)
+  country                        String?   @db.VarChar(100)
+  contact_name                   String?   @db.VarChar(100)
+  contact_phone                  String?   @db.VarChar(30)
+  contact_mobile                 String?   @db.VarChar(30)
+  contact_fax                    String?   @db.VarChar(30)
+  contact_email                  String?   @db.VarChar(100)
+  broker_type                    String?   @db.VarChar(20)
+  brokerage_method               String?   @db.VarChar(20)
+  brokerage_cal_method_id        Int?
+  brokerage_input_percentage     Decimal?  @db.Decimal(10, 4)
+  brokerage_settlement_method_id Int?
+  settlement_account_number      String?   @db.VarChar(100)
+  created_at                     DateTime? @default(now()) @db.DateTime(0)
+  updated_at                     DateTime? @default(now()) @db.DateTime(0)
+}
+
+model chart_of_accounts {
+  id                      Int                 @id @default(autoincrement())
+  account_code            String              @unique(map: "account_code") @db.VarChar(20)
+  name                    String              @db.VarChar(255)
+  account_type_id         Int
+  parent_account_id       Int?
+  description             String?             @db.Text
+  is_active               Boolean?            @default(true)
+  created_at              DateTime?           @default(now()) @db.Timestamp(0)
+  updated_at              DateTime?           @default(now()) @db.Timestamp(0)
+  account_types           account_types       @relation(fields: [account_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "chart_of_accounts_ibfk_1")
+  chart_of_accounts       chart_of_accounts?  @relation("chart_of_accountsTochart_of_accounts", fields: [parent_account_id], references: [id], onUpdate: NoAction, map: "chart_of_accounts_ibfk_2")
+  other_chart_of_accounts chart_of_accounts[] @relation("chart_of_accountsTochart_of_accounts")
+  ledger_entries          ledger_entries[]
+
+  @@index([account_type_id], map: "account_type_id")
+  @@index([parent_account_id], map: "parent_account_id")
+}
+
+model counterparty_limits {
+  id                              Int                                   @id @default(autoincrement())
+  counterparty_id                 Int
+  counterparty_type               counterparty_limits_counterparty_type
+  overall_exposure_limit          Decimal?                              @db.Decimal(18, 2)
+  currency_limit                  String?                               @db.VarChar(10)
+  product_money_market_limit      Decimal?                              @db.Decimal(18, 2)
+  product_fx_limit                Decimal?                              @db.Decimal(18, 2)
+  product_derivative_limit        Decimal?                              @db.Decimal(18, 2)
+  product_repo_limit              Decimal?                              @db.Decimal(18, 2)
+  product_reverse_repo_limit      Decimal?                              @db.Decimal(18, 2)
+  product_gsec_limit              Decimal?                              @db.Decimal(18, 2)
+  product_sell_and_buy_back_limit Decimal?                              @db.Decimal(18, 2)
+  product_buy_and_sell_back_limit Decimal?                              @db.Decimal(18, 2)
+  tenor_limit                     Decimal?                              @db.Decimal(18, 2)
+  settlement_risk_limit           Decimal?                              @db.Decimal(18, 2)
+  country_limit                   Decimal?                              @db.Decimal(18, 2)
+  group_limit                     Decimal?                              @db.Decimal(18, 2)
+  intraday_limit                  Decimal?                              @db.Decimal(18, 2)
+  created_at                      DateTime?                             @default(now()) @db.Timestamp(0)
+  product_transaction_limit       Decimal?                              @default(0.00) @db.Decimal(15, 2)
+  currency                        String?                               @default("LKR") @db.VarChar(10)
+}
+
+model counterparty_master_individual {
+  id           Int       @id @default(autoincrement())
+  title        String?   @db.VarChar(10)
+  short_name   String?   @db.VarChar(100)
+  long_name    String?   @db.VarChar(200)
+  id_type      String?   @db.VarChar(50)
+  house_number String?   @db.VarChar(50)
+  street_name  String?   @db.VarChar(100)
+  province     String?   @db.VarChar(100)
+  postal_code  String?   @db.VarChar(20)
+  city         String?   @db.VarChar(100)
+  country      String?   @db.VarChar(100)
+  telephone    String?   @db.VarChar(50)
+  email        String?   @db.VarChar(100)
+  mobile       String?   @db.VarChar(50)
+  created_at   DateTime? @default(now()) @db.Timestamp(0)
+}
+
+model counterparty_master_joint {
+  id           Int       @id @default(autoincrement())
+  title        String    @db.VarChar(10)
+  short_name   String?   @db.VarChar(100)
+  long_name    String?   @db.VarChar(200)
+  id_type      String    @db.VarChar(30)
+  house_number String?   @db.VarChar(50)
+  street_name  String?   @db.VarChar(100)
+  province     String?   @db.VarChar(50)
+  postal_code  String?   @db.VarChar(20)
+  city         String?   @db.VarChar(50)
+  country      String?   @db.VarChar(50)
+  telephone    String?   @db.VarChar(30)
+  email        String?   @db.VarChar(100)
+  mobile       String?   @db.VarChar(30)
+  created_at   DateTime? @default(now()) @db.Timestamp(0)
+}
+
+model gsec {
+  id                               Int       @id @default(autoincrement())
+  trade_type                       String?   @db.VarChar(255)
+  transaction_type                 String?   @db.VarChar(255)
+  counterparty                     String?   @db.VarChar(255)
+  deal_number                      String?   @db.VarChar(255)
+  isin                             String?   @db.VarChar(255)
+  face_value                       Decimal?  @db.Decimal(20, 6)
+  value_date                       DateTime? @db.Date
+  next_coupon_date                 DateTime? @db.Date
+  last_coupon_date                 DateTime? @db.Date
+  number_of_days_interest_accrued  Int?
+  number_of_days_for_coupon_period Int?
+  accrued_interest                 Decimal?  @db.Decimal(20, 6)
+  coupon_interest                  Decimal?  @db.Decimal(20, 6)
+  clean_price                      Decimal?  @db.Decimal(20, 6)
+  dirty_price                      Decimal?  @db.Decimal(20, 6)
+  accrued_interest_calculation     Decimal?  @db.Decimal(20, 6)
+  accrued_interest_six_decimals    Decimal?  @db.Decimal(20, 6)
+  accrued_interest_for_100         Decimal?  @db.Decimal(20, 6)
+  settlement_amount                Decimal?  @db.Decimal(20, 6)
+  settlement_mode                  String?   @db.VarChar(255)
+  issue_date                       DateTime? @db.Date
+  maturity_date                    DateTime? @db.Date
+  coupon_dates                     String?   @db.VarChar(255)
+  yield                            Decimal?  @db.Decimal(20, 6)
+  portfolio                        String?   @db.VarChar(50)
+  clean_price_adjustment           String?   @db.VarChar(50)
+  accrued_interest_adjustment      String?   @db.VarChar(50)
+  broker                           String?   @db.VarChar(50)
+  strategy                         String?   @db.VarChar(50)
+  status                           String?   @default("pending") @db.VarChar(20)
+  comment                          String?   @db.Text
+  created_by                       Int?
+  stratergy                        String?   @db.VarChar(50)
+  created_at                       DateTime? @default(now()) @db.DateTime(0)
+  updated_by                       Int?
+  updated_at                       DateTime? @default(now()) @db.DateTime(0)
+  authorized_by                    Int?
+  authorized_at                    DateTime? @db.DateTime(0)
+  brokerage                        Decimal?  @db.Decimal(20, 6)
+  currency                         String    @default("LKR") @db.VarChar(10)
+
+  @@index([created_by], map: "idx_gsec_created_by")
+  @@index([status], map: "idx_gsec_status")
+}
+
+model isin_coupon_schedule {
+  id            Int         @id @default(autoincrement())
+  isin          String      @db.VarChar(20)
+  coupon_number Int
+  coupon_date   DateTime    @db.Date
+  coupon_amount Decimal     @db.Decimal(10, 4)
+  principal     Decimal?    @default(0.0000) @db.Decimal(10, 4)
+  isin_master   isin_master @relation(fields: [isin], references: [isin_number], onDelete: NoAction, onUpdate: NoAction, map: "isin_coupon_schedule_ibfk_1")
+
+  @@index([isin], map: "isin")
+}
+
+model isin_master {
+  id                   Int                    @id @default(autoincrement())
+  isin_issuer          String                 @db.VarChar(255)
+  isin_number          String                 @unique(map: "isin_number") @db.VarChar(255)
+  issue_date           DateTime               @db.Date
+  maturity_date        DateTime               @db.Date
+  coupon_rate          Decimal                @db.Decimal(10, 4)
+  series               String?                @db.VarChar(255)
+  coupon_date_1        DateTime               @db.Date
+  coupon_date_2        DateTime               @db.Date
+  day_basis            Int
+  currency             String                 @db.VarChar(10)
+  created_at           DateTime               @default(now()) @db.DateTime(0)
+  updated_at           DateTime               @default(now()) @db.DateTime(0)
+  isin_coupon_schedule isin_coupon_schedule[]
+}
+
+model ledger_entries {
+  id                Int               @id @default(autoincrement())
+  account_id        Int
+  entry_date        DateTime          @db.Date
+  debit_amount      Decimal?          @default(0.00) @db.Decimal(15, 2)
+  credit_amount     Decimal?          @default(0.00) @db.Decimal(15, 2)
+  currency          String?           @default("LKR") @db.VarChar(10)
+  description       String?           @db.Text
+  created_at        DateTime?         @default(now()) @db.Timestamp(0)
+  updated_at        DateTime?         @default(now()) @db.Timestamp(0)
+  deal_number       String?           @db.VarChar(64)
+  chart_of_accounts chart_of_accounts @relation(fields: [account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "ledger_entries_ibfk_2")
+
+  @@index([account_id], map: "account_id")
+}
+
+model money_market_deals {
+  id                Int                                  @id @default(autoincrement())
+  deal_number       String                               @unique(map: "deal_number") @db.VarChar(32)
+  trade_date        DateTime                             @db.Date
+  value_date        DateTime                             @db.Date
+  maturity_date     DateTime                             @db.Date
+  counterparty_type money_market_deals_counterparty_type
+  counterparty_id   Int
+  product_type      String                               @db.VarChar(32)
+  currency          String                               @db.VarChar(8)
+  principal_amount  Decimal                              @db.Decimal(18, 4)
+  interest_rate     Decimal                              @db.Decimal(8, 4)
+  tenor             Int
+  interest_amount   Decimal                              @db.Decimal(18, 4)
+  maturity_value    Decimal                              @db.Decimal(18, 4)
+  settlement_mode   String?                              @db.VarChar(32)
+  remarks           String?                              @db.VarChar(255)
+  created_at        DateTime?                            @default(now()) @db.Timestamp(0)
+  updated_at        DateTime?                            @default(now()) @db.Timestamp(0)
+}
+
+model portfolio_master {
+  portfolio_id            String                               @id @db.VarChar(50)
+  portfolio_name          String                               @db.VarChar(255)
+  portfolio_type          String?                              @db.VarChar(100)
+  entity_business_unit    String?                              @db.VarChar(100)
+  fund_manager_user_id    String?                              @db.VarChar(100)
+  base_currency           String?                              @db.VarChar(20)
+  benchmark               String?                              @db.VarChar(255)
+  start_date              DateTime?                            @db.Date
+  end_date                DateTime?                            @db.Date
+  status                  portfolio_master_status?             @default(Active)
+  risk_profile            portfolio_master_risk_profile?
+  investment_horizon      portfolio_master_investment_horizon?
+  target_yield_return     Decimal?                             @db.Decimal(8, 4)
+  compliance_rules_id     String?                              @db.VarChar(100)
+  notes_description       String?                              @db.Text
+  parent_portfolio_id     String?                              @db.VarChar(50)
+  valuation_method        String?                              @db.VarChar(50)
+  accounting_treatment    String?                              @db.VarChar(50)
+  rebalancing_frequency   String?                              @db.VarChar(50)
+  external_reference_code String?                              @db.VarChar(100)
+  tags_categories         String?                              @db.VarChar(255)
+  created_at              DateTime?                            @default(now()) @db.Timestamp(0)
+  updated_at              DateTime?                            @default(now()) @db.Timestamp(0)
+  portfolio_master        portfolio_master?                    @relation("portfolio_masterToportfolio_master", fields: [parent_portfolio_id], references: [portfolio_id], onDelete: NoAction, onUpdate: NoAction, map: "portfolio_master_ibfk_1")
+  other_portfolio_master  portfolio_master[]                   @relation("portfolio_masterToportfolio_master")
+
+  @@index([parent_portfolio_id], map: "parent_portfolio_id")
+}
+
+model securities {
+  id   Int    @id @default(autoincrement())
+  name String @db.VarChar(255)
+}
+
+model settlement_accounts {
+  id                      BigInt    @id @unique(map: "id") @default(autoincrement()) @db.UnsignedBigInt
+  bank_name               String    @db.VarChar(100)
+  bank_payment_code       String?   @db.VarChar(50)
+  bank_code               String?   @db.VarChar(50)
+  address_building_number String?   @db.VarChar(30)
+  address_street_name     String?   @db.VarChar(100)
+  address_street_name2    String?   @db.VarChar(100)
+  address_city            String?   @db.VarChar(50)
+  address_province        String?   @db.VarChar(50)
+  address_zip_code        String?   @db.VarChar(20)
+  address_country         String?   @db.VarChar(50)
+  contact_name            String?   @db.VarChar(100)
+  contact_phone           String?   @db.VarChar(30)
+  contact_mobile          String?   @db.VarChar(30)
+  contact_fax             String?   @db.VarChar(30)
+  contact_email           String?   @db.VarChar(100)
+  account_type            String?   @db.VarChar(30)
+  bank_account_number     String?   @db.VarChar(50)
+  bank_branch             String?   @db.VarChar(100)
+  created_at              DateTime? @default(now()) @db.Timestamp(0)
+  updated_at              DateTime? @default(now()) @db.Timestamp(0)
+}
+
+model strategy_master {
+  strategy_id          String  @id @db.VarChar(64)
+  portfolio_name       String  @db.VarChar(128)
+  strategy_type        String? @db.VarChar(64)
+  entity_business_unit String? @db.VarChar(64)
+}
+
+model transaction_types {
+  id         Int       @id @default(autoincrement())
+  name       String    @db.VarChar(100)
+  category   String    @db.VarChar(50)
+  created_at DateTime? @default(now()) @db.Timestamp(0)
+  updated_at DateTime? @default(now()) @db.Timestamp(0)
+}
+
+/// The underlying table does not contain a valid unique identifier and can therefore currently not be handled by Prisma Client.
+model transactions {
+  source_account_id    Int
+  category             String                             @db.VarChar(100)
+  amount               Decimal                            @db.Decimal(15, 2)
+  date                 DateTime                           @db.Date
+  description          String?                            @db.Text
+  created_at           DateTime?                          @default(now()) @db.Timestamp(0)
+  updated_at           DateTime?                          @default(now()) @db.Timestamp(0)
+  trade_date           DateTime?                          @db.Date
+  value_date           DateTime?                          @db.Date
+  interest_rate        Decimal?                           @db.Decimal(8, 4)
+  settlement_mode      String?                            @db.VarChar(20)
+  price                Decimal?                           @db.Decimal(15, 4)
+  yield                Decimal?                           @db.Decimal(8, 4)
+  portfolio            String?                            @db.VarChar(50)
+  strategy             String?                            @db.VarChar(100)
+  currency             String?                            @db.VarChar(10)
+  transaction_code     String?                            @db.VarChar(50)
+  commission           Decimal?                           @db.Decimal(10, 2)
+  brokerage            Decimal?                           @db.Decimal(10, 2)
+  remarks              String?                            @db.Text
+  user                 String?                            @db.VarChar(100)
+  security_id          Int?
+  counterparty_id      Int?
+  transaction_type_id  Int?
+  authorization_status transactions_authorization_status? @default(pending)
+  status               String?                            @default("pending") @db.VarChar(20)
+  comment              String?                            @db.Text
+  deal_number          String?                            @db.VarChar(64)
+  accounts             accounts                           @relation(fields: [source_account_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "transactions_ibfk_1")
+
+  @@index([source_account_id], map: "source_account_id")
+  @@ignore
+}
+
+model users {
+  id           Int        @id @default(autoincrement())
+  username     String     @unique(map: "username") @db.VarChar(255)
+  password     String     @db.VarChar(255)
+  role         users_role @default(user)
+  created_at   DateTime?  @default(now()) @db.Timestamp(0)
+  allowed_tabs String?    @db.Text
+  limit_id     Int?
+}
+
+enum account_types_category {
+  asset
+  liability
+  equity
+  revenue
+  expense
+}
+
+enum counterparty_limits_counterparty_type {
+  individual
+  joint
+}
+
+enum users_role {
+  user
+  authorizer
+}
+
+enum money_market_deals_counterparty_type {
+  individual
+  joint
+}
+
+enum portfolio_master_status {
+  Active
+  Inactive
+}
+
+enum portfolio_master_risk_profile {
+  Conservative
+  Moderate
+  Aggressive
+}
+
+enum portfolio_master_investment_horizon {
+  Short_term  @map("Short-term")
+  Medium_term @map("Medium-term")
+  Long_term   @map("Long-term")
+}
+
+enum transactions_authorization_status {
+  pending
+  authorized
+  rejected
+}
