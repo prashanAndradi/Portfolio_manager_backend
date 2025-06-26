@@ -121,6 +121,7 @@ exports.createTransaction = async (req, res) => {
 
 // Update transaction
 exports.updateTransaction = async (req, res) => {
+  console.log('updateTransaction called. req.params:', req.params, 'req.body:', req.body);
   try {
     const deal_number = req.params.deal_number;
     const data = req.body;
@@ -137,9 +138,38 @@ exports.updateTransaction = async (req, res) => {
       });
     }
     
+    // Always allow reversal to front office on rejection, regardless of user role
+    if (data.status === 'rejected') {
+      // FORCE reversal to front office on any back office rejection (regardless of user role or creator)
+      console.log('Back office rejection: Forcing current_approval_level=front_office, status=pending, approval_status=pending');
+      const updatePayload = {};
+      updatePayload.status = 'pending';
+      updatePayload.approval_status = 'pending';
+      updatePayload.current_approval_level = 'front_office';
+      if (data.comment !== undefined) updatePayload.comment = data.comment;
+      updatePayload.rejected_by_back_office = true;
+      const updatedTransaction = await Transaction.update(deal_number, updatePayload);
+      return res.status(200).json({
+        success: true,
+        message: 'Transaction updated successfully',
+        data: updatedTransaction
+      });
+    }
+    
     // Check if this is a status update (approval/rejection)
-    if (data.status && Object.keys(data).length <= 2) { // status and possibly comment
-      // Check if user is authorizer
+    // Allow authorizers to escalate by updating approval_status and/or current_approval_level
+    const isAuthorizerEscalation = (
+      user?.role === 'authorizer' &&
+      (
+        (data.approval_status !== undefined || data.current_approval_level !== undefined) &&
+        Object.keys(data).every(k => ['approval_status', 'current_approval_level'].includes(k))
+      )
+    );
+    if (
+      (data.status && Object.keys(data).length <= 2) ||
+      isAuthorizerEscalation
+    ) {
+      // Check if user is authorizer or admin for these actions
       if (user?.role !== 'authorizer' && user?.role !== 'admin') {
         return res.status(403).json({
           success: false,
@@ -147,7 +177,6 @@ exports.updateTransaction = async (req, res) => {
           receivedRole: user?.role
         });
       }
-      
       // If status is rejected, require a comment
       if (data.status === 'rejected' && !data.comment) {
         return res.status(400).json({
@@ -155,24 +184,22 @@ exports.updateTransaction = async (req, res) => {
           message: 'Comment is required when rejecting a transaction'
         });
       }
-      
-      console.log(`Updating transaction ${id} status to ${data.status}`);
-      
-      // Update only the status and comment
-      const updatedTransaction = await Transaction.update(id, {
-        status: data.status,
-        comment: data.comment
-      });
-      
+      // Update only the allowed fields
+      const updatePayload = {};
+      if (data.status !== undefined) updatePayload.status = data.status;
+      if (data.comment !== undefined) updatePayload.comment = data.comment;
+      if (data.approval_status !== undefined) updatePayload.approval_status = data.approval_status;
+      if (data.current_approval_level !== undefined) updatePayload.current_approval_level = data.current_approval_level;
+      const updatedTransaction = await Transaction.update(deal_number, updatePayload);
       return res.status(200).json({
         success: true,
-        message: `Transaction ${data.status} successfully`,
+        message: 'Transaction updated successfully',
         data: updatedTransaction
       });
     } else {
       // This is a regular transaction update
-      // If rejected, only creator can edit
-      if (transaction.status === 'rejected') {
+      // If rejected, only creator can edit (UNLESS this is a back office reversal, which is handled above)
+      if (transaction.status === 'rejected' && data.status !== 'rejected') {
         if (!transaction.user || !user?.username || transaction.user !== user.username) {
           return res.status(403).json({
             success: false,

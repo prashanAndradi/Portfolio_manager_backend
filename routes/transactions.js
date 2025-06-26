@@ -20,8 +20,8 @@ router.get('/:id', transactionController.getTransactionById);
 // Create new transaction
 router.post('/', transactionController.createTransaction);
 
-// Update transaction
-router.put('/:id', transactionController.updateTransaction);
+// Update transaction by deal_number
+router.put('/:deal_number', transactionController.updateTransaction);
 
 // Delete transaction
 router.delete('/:id', transactionController.deleteTransaction);

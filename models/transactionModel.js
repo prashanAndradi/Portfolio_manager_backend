@@ -3,6 +3,15 @@ const Accounting = require('./accountingModel');
 const Counterparty = require('./counterpartyModel');
 
 class Transaction {
+  // Helper to build default approval fields
+  static getDefaultApprovalFields(userId) {
+    return {
+      approval_status: 'pending',
+      current_approval_level: 'front_office',
+      approval_chain: JSON.stringify([]),
+      submitted_by: userId || 0
+    };
+  }
   // Get all transactions with joined account information
   static async getAll() {
     try {
@@ -87,8 +96,8 @@ class Transaction {
     }
   }
 
-  // Get a single transaction by ID
-  static async getById(id) {
+  // Get a single transaction by deal_number
+  static async getById(deal_number) {
     try {
       const [rows] = await db.query(`
         SELECT 
@@ -100,7 +109,7 @@ class Transaction {
         LEFT JOIN accounts a ON t.source_account_id = a.id
         LEFT JOIN users u ON t.user = u.id
         WHERE t.deal_number = ?
-      `, [id]);
+      `, [deal_number]);
       
       if (rows.length === 0) {
         return null;
@@ -215,8 +224,8 @@ class Transaction {
     }
   }
 
-  // Update a transaction
-  static async update(id, transaction) {
+  // Update a transaction by deal_number
+  static async update(deal_number, transaction) {
     const connection = await db.getConnection();
     
     try {
@@ -224,8 +233,8 @@ class Transaction {
       
       // Get old transaction to calculate balance adjustment
       const [oldTransactionRows] = await connection.query(
-        'SELECT amount, source_account_id, status FROM transactions WHERE id = ?',
-        [id]
+        'SELECT amount, source_account_id, status FROM transactions WHERE deal_number = ?',
+        [deal_number]
       );
       
       if (oldTransactionRows.length === 0) {
@@ -242,19 +251,19 @@ class Transaction {
           !transaction.date) {
         
         const status = transaction.status || transaction.authorization_status;
-        console.log(`Updating status to ${status} for transaction ${id}`);
+        console.log(`Updating status to ${status} for transaction ${deal_number}`);
         
         // Update the status and comment if provided
         if (transaction.comment) {
           console.log(`Adding comment: ${transaction.comment}`);
           await connection.query(
-            'UPDATE transactions SET status = ?, comment = ? WHERE id = ?',
-            [status, transaction.comment, id]
+            'UPDATE transactions SET status = ?, comment = ? WHERE deal_number = ?',
+            [status, transaction.comment, deal_number]
           );
         } else {
           await connection.query(
-            'UPDATE transactions SET status = ? WHERE id = ?',
-            [status, id]
+            'UPDATE transactions SET status = ? WHERE deal_number = ?',
+            [status, deal_number]
           );
         }
       } else {
@@ -281,21 +290,15 @@ class Transaction {
               [transaction.amount, transaction.sourceAccount]
             );
           }
-          
-          // Delete old ledger entries and create new ones
-          try {
-            await Accounting.deleteLedgerEntriesForTransaction(id, connection);
-            
-            // Create new ledger entries
-            const updatedTransaction = { 
-              ...transaction, 
-              id: id 
-            };
-            await Accounting.createLedgerEntriesForTransaction(updatedTransaction, connection);
-          } catch (accountingError) {
-            console.error('Error updating ledger entries:', accountingError);
-            // Continue even if ledger entries fail - don't roll back the transaction
-          }
+          // SKIP ledger entry deletion and creation for now (per user request)
+          // try {
+          //   await Accounting.deleteLedgerEntriesForTransaction(deal_number, connection);
+          //   const updatedTransaction = { ...transaction, deal_number: deal_number };
+          //   await Accounting.createLedgerEntriesForTransaction(updatedTransaction, connection);
+          // } catch (accountingError) {
+          //   console.error('Error updating ledger entries:', accountingError);
+          //   // Continue even if ledger entries fail - don't roll back the transaction
+          // }
         }
         
         // Build dynamic update query based on provided fields
@@ -411,19 +414,26 @@ class Transaction {
           updateFields.push('status = ?');
           updateValues.push(transaction.status);
         }
-        
+        if (transaction.approval_status !== undefined) {
+          updateFields.push('approval_status = ?');
+          updateValues.push(transaction.approval_status);
+        }
+        if (transaction.current_approval_level !== undefined) {
+          updateFields.push('current_approval_level = ?');
+          updateValues.push(transaction.current_approval_level);
+        }
         if (transaction.comment !== undefined) {
           updateFields.push('comment = ?');
           updateValues.push(transaction.comment);
         }
         
-        // Add transaction ID to values array
-        updateValues.push(id);
+        // Add deal_number to values array
+        updateValues.push(deal_number);
         
         // Execute update if there are fields to update
         if (updateFields.length > 0) {
           await connection.query(
-            `UPDATE transactions SET ${updateFields.join(', ')} WHERE id = ?`,
+            `UPDATE transactions SET ${updateFields.join(', ')} WHERE deal_number = ?`,
             updateValues
           );
         }
@@ -432,7 +442,7 @@ class Transaction {
       await connection.commit();
       
       // Get the updated transaction with joined data
-      const updatedTransaction = await this.getById(id);
+      const updatedTransaction = await this.getById(deal_number);
       return updatedTransaction;
     } catch (error) {
       await connection.rollback();
