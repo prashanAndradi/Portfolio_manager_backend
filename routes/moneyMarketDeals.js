@@ -47,13 +47,72 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/money-market-deals - List all deals (optional)
+// GET /api/money-market-deals - List all deals, or limit if ?limit=N
 router.get('/', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM money_market_deals ORDER BY trade_date DESC');
+    let sql = 'SELECT * FROM money_market_deals ORDER BY trade_date DESC, id DESC';
+    const values = [];
+    if (req.query.limit) {
+      sql += ' LIMIT ?';
+      values.push(Number(req.query.limit));
+    }
+    const [rows] = await pool.query(sql, values);
     res.json({ success: true, data: rows });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Failed to fetch deals', error: err.message });
+  }
+});
+
+// PUT /api/money-market-deals/:deal_number - Update status/authorization
+router.put('/:deal_number', async (req, res) => {
+  const dealNumber = req.params.deal_number;
+  const {
+    status,
+    current_approval_level,
+    comment,
+    authorized_by,
+    authorized_at
+  } = req.body;
+
+  // Build dynamic update query
+  const fields = [];
+  const values = [];
+  if (status !== undefined) {
+    fields.push('status = ?');
+    values.push(status);
+  }
+  if (current_approval_level !== undefined) {
+    fields.push('current_approval_level = ?');
+    values.push(current_approval_level);
+  }
+  if (comment !== undefined) {
+    fields.push('comment = ?');
+    values.push(comment);
+  }
+  if (authorized_by !== undefined) {
+    fields.push('authorized_by = ?');
+    values.push(authorized_by);
+  }
+  if (authorized_at !== undefined) {
+    fields.push('authorized_at = ?');
+    values.push(authorized_at);
+  }
+  if (fields.length === 0) {
+    return res.status(400).json({ success: false, message: 'No fields to update' });
+  }
+  try {
+    const [result] = await pool.query(
+      `UPDATE money_market_deals SET ${fields.join(', ')} WHERE deal_number = ?`,
+      [...values, dealNumber]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Deal not found' });
+    }
+    // Return the updated deal
+    const [rows] = await pool.query('SELECT * FROM money_market_deals WHERE deal_number = ?', [dealNumber]);
+    res.json({ success: true, data: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to update deal', error: err.message });
   }
 });
 

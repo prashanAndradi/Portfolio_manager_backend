@@ -1,5 +1,6 @@
 const bcrypt = require('bcrypt');
 const User = require('../models/userModel');
+const AuthorizerAssignment = require('../models/authorizerAssignmentModel');
 
 // User registration with role selection
 exports.register = async (req, res) => {
@@ -108,14 +109,41 @@ exports.login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
     
+    // Check for authorizer assignment and override role if present
+    let effectiveRole = user.role;
+    let allowedTabs = user.allowed_tabs || [];
+    // Fetch all assignments for this user
+    const [assignments] = await require('../config/db').query('SELECT * FROM authorizer_assignments WHERE user_id = ?', [user.id]);
+    if (assignments && assignments.length > 0) {
+      // Priority: back_office_final > back_office_verifier > back_office > front_office > authorizer > others
+      const rolePriority = ['back_office_final', 'back_office_verifier', 'back_office', 'front_office', 'authorizer'];
+      let bestAssignment = assignments[0];
+      for (const role of rolePriority) {
+        const found = assignments.find(a => a.role === role);
+        if (found) {
+          bestAssignment = found;
+          break;
+        }
+      }
+      effectiveRole = bestAssignment.role;
+      // allowed_pages is a JSON string or array
+      if (bestAssignment.allowed_pages) {
+        try {
+          allowedTabs = Array.isArray(bestAssignment.allowed_pages) ? bestAssignment.allowed_pages : JSON.parse(bestAssignment.allowed_pages);
+        } catch {
+          allowedTabs = [bestAssignment.allowed_pages];
+        }
+      }
+    }
+    
     console.log('Login successful for:', username);
     res.json({
       success: true,
       user: {
         id: user.id,
         username: user.username,
-        role: user.role,
-        allowed_tabs: user.allowed_tabs || []
+        role: effectiveRole,
+        allowed_tabs: allowedTabs
       }
     });
   } catch (err) {

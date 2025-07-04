@@ -250,22 +250,31 @@ class Transaction {
           !transaction.category && 
           !transaction.date) {
         
-        const status = transaction.status || transaction.authorization_status;
-        console.log(`Updating status to ${status} for transaction ${deal_number}`);
-        
-        // Update the status and comment if provided
-        if (transaction.comment) {
-          console.log(`Adding comment: ${transaction.comment}`);
+        // Dynamically update status, comment, and current_approval_level if present
+        const updateFields = [];
+        const updateValues = [];
+        if (transaction.status) {
+          updateFields.push('status = ?');
+          updateValues.push(transaction.status);
+        }
+        if (transaction.comment !== undefined) {
+          updateFields.push('comment = ?');
+          updateValues.push(transaction.comment);
+        }
+        if (transaction.current_approval_level !== undefined) {
+          updateFields.push('current_approval_level = ?');
+          updateValues.push(transaction.current_approval_level);
+        }
+        if (updateFields.length > 0) {
           await connection.query(
-            'UPDATE transactions SET status = ?, comment = ? WHERE deal_number = ?',
-            [status, transaction.comment, deal_number]
-          );
-        } else {
-          await connection.query(
-            'UPDATE transactions SET status = ? WHERE deal_number = ?',
-            [status, deal_number]
+            `UPDATE transactions SET ${updateFields.join(', ')} WHERE deal_number = ?`,
+            [...updateValues, deal_number]
           );
         }
+        await connection.commit();
+        // Get the updated transaction with joined data
+        const updatedTransaction = await this.getById(deal_number);
+        return updatedTransaction;
       } else {
         // If amount changed or account changed, adjust balances
         if (oldTransaction.amount !== transaction.amount || 

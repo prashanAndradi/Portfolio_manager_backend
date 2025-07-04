@@ -156,10 +156,29 @@ exports.updateTransaction = async (req, res) => {
       });
     }
     
-    // Check if this is a status update (approval/rejection)
-    // Allow authorizers to escalate by updating approval_status and/or current_approval_level
+    // Special case: allow back_office to escalate to back_office_final
+    if (
+      user?.role === 'back_office' &&
+      data.status === 'approved' &&
+      data.current_approval_level === 'back_office_final'
+    ) {
+      const updatePayload = {
+        status: data.status,
+        current_approval_level: data.current_approval_level,
+      };
+      if (data.comment !== undefined) updatePayload.comment = data.comment;
+      if (data.approval_status !== undefined) updatePayload.approval_status = data.approval_status;
+      const updatedTransaction = await Transaction.update(deal_number, updatePayload);
+      return res.status(200).json({
+        success: true,
+        message: 'Transaction escalated to final back office',
+        data: updatedTransaction
+      });
+    }
+
+    // Allow authorizers and front_office to escalate by updating approval_status and/or current_approval_level
     const isAuthorizerEscalation = (
-      user?.role === 'authorizer' &&
+      (user?.role === 'authorizer' || user?.role === 'front_office') &&
       (
         (data.approval_status !== undefined || data.current_approval_level !== undefined) &&
         Object.keys(data).every(k => ['approval_status', 'current_approval_level'].includes(k))
@@ -169,13 +188,29 @@ exports.updateTransaction = async (req, res) => {
       (data.status && Object.keys(data).length <= 2) ||
       isAuthorizerEscalation
     ) {
-      // Check if user is authorizer or admin for these actions
-      if (user?.role !== 'authorizer' && user?.role !== 'admin') {
-        return res.status(403).json({
-          success: false,
-          message: 'Only authorizers can update transaction status',
-          receivedRole: user?.role
+      // Allow back_office escalation to final level
+      if (user?.role === 'back_office' && data.status === 'approved' && data.current_approval_level === 'back_office_final') {
+        // Perform the escalation update
+        const updatePayload = {
+          status: data.status,
+          current_approval_level: data.current_approval_level,
+        };
+        if (data.comment !== undefined) updatePayload.comment = data.comment;
+        if (data.approval_status !== undefined) updatePayload.approval_status = data.approval_status;
+        const updatedTransaction = await Transaction.update(deal_number, updatePayload);
+        return res.status(200).json({
+          success: true,
+          message: 'Transaction escalated to final back office',
+          data: updatedTransaction
         });
+      } else if (user?.role !== 'authorizer' && user?.role !== 'admin') {
+        if (user?.role !== 'front_office') {
+          return res.status(403).json({
+            success: false,
+            message: 'Only authorizers can update transaction status',
+            receivedRole: user?.role
+          });
+        }
       }
       // If status is rejected, require a comment
       if (data.status === 'rejected' && !data.comment) {
