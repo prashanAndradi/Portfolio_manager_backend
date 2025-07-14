@@ -35,6 +35,7 @@ const limitStatusRoutes = require('./routes/limitStatusRoutes');
 const indexRoutes = require('./routes/index');
 const moneyMarketDealsRoutes = require('./routes/moneyMarketDeals');
 const paymentMasterRoutes = require('./routes/paymentMasterRoutes');
+const strategyMasterRoutes = require('./routes/strategyMasterRoutes');
 
 // Use routes
 app.use('/api', indexRoutes);
@@ -54,6 +55,7 @@ app.use('/api/brokers', require('./routes/brokerRoutes'));
 app.use('/api', counterpartyJointRoutes);
 app.use('/api', require('./routes/limitSetupRoutes'));
 app.use('/api/limits', limitStatusRoutes);
+app.use('/api/strategy-master', strategyMasterRoutes);
 
 // Portfolio Master API
 app.use('/api', require('./routes/index'));
@@ -152,3 +154,7 @@ app.listen(PORT, () => {
       console.error('Database test failed:', err.message);
     });
 });
+
+console.log('=== Portfolio Backend Server STARTED ===');
+console.log('CWD:', process.cwd());
+console.log('StrategyMasterRoutes:', require('fs').existsSync('./routes/strategyMasterRoutes.js'));
