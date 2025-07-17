@@ -216,6 +216,25 @@ exports.updatePaymentMaster = async (req, res) => {
   }
 };
 
+// Get all payment methods from payment_master
+exports.getAllPaymentMethods = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      `SELECT DISTINCT 
+        bank_payment_code AS payment_method_code, 
+        bank_name, 
+        bank_branch AS branch, 
+        bank_account_number AS account_number 
+      FROM settlement_accounts 
+      WHERE bank_payment_code IS NOT NULL AND bank_payment_code != ''`
+    );
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('Error fetching payment methods:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
 // Get payment methods (predefined list)
 exports.getPaymentMethods = async (req, res) => {
   try {

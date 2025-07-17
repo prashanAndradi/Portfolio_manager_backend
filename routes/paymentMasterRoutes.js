@@ -52,4 +52,7 @@ router.put('/:id', paymentMasterController.updatePaymentMaster);
 // GET payment methods
 router.get('/methods', paymentMasterController.getPaymentMethods);
 
+// GET all payment methods from payment_master (for dropdown)
+router.get('/all-methods', paymentMasterController.getAllPaymentMethods);
+
 module.exports = router;
