@@ -41,6 +41,7 @@ const strategyMasterRoutes = require('./routes/strategyMasterRoutes');
 // Use routes
 app.use('/api/auth', authRoutes); // <-- Ensure /api/auth/login works
 app.use('/api', require('./routes/index'));
+app.use('/api/money-market-deals', moneyMarketDealsRoutes);
 
 
 // Add a direct register endpoint that will definitely work
