@@ -34,30 +34,12 @@ const counterpartyJointRoutes = require('./routes/counterpartyJointRoutes');
 const limitStatusRoutes = require('./routes/limitStatusRoutes');
 const indexRoutes = require('./routes/index');
 const moneyMarketDealsRoutes = require('./routes/moneyMarketDeals');
+const voucherRoutes = require('./routes/voucher');
 const paymentMasterRoutes = require('./routes/paymentMasterRoutes');
 const strategyMasterRoutes = require('./routes/strategyMasterRoutes');
 
 // Use routes
-app.use('/api', indexRoutes);
-app.use('/api/accounts', accountRoutes);
-app.use('/api/payment-master', paymentMasterRoutes);
-app.use('/api/transaction-types', transactionTypeRoutes);
-app.use('/api/securities', securityRoutes);
-app.use('/api/money-market-deals', moneyMarketDealsRoutes);
-app.use('/api/counterparties', counterpartyRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/transactions', transactionRoutes);
-app.use('/api/accounting', accountingRoutes);
-app.use('/api/isin-master', isinMasterRoutes);
-app.use('/api', counterpartyIndividualRoutes);
-app.use('/api/brokers', require('./routes/brokerRoutes'));
-app.use('/api', counterpartyJointRoutes);
-app.use('/api', require('./routes/limitSetupRoutes'));
-app.use('/api/limits', limitStatusRoutes);
-app.use('/api/strategy-master', strategyMasterRoutes);
-
-// Portfolio Master API
+app.use('/api/auth', authRoutes); // <-- Ensure /api/auth/login works
 app.use('/api', require('./routes/index'));
 
 

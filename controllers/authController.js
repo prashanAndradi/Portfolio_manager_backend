@@ -76,6 +76,9 @@ exports.register = async (req, res) => {
   }
 };
 
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
 exports.login = async (req, res) => {
   try {
     console.log('LOGIN ATTEMPT:', req.body);
@@ -84,14 +87,12 @@ exports.login = async (req, res) => {
     // Static admin check
     if (username === 'admin' && password === 'Admin@321') {
       console.log('Admin login successful');
+      const adminPayload = { id: 0, username: 'admin', role: 'admin' };
+      const token = jwt.sign(adminPayload, JWT_SECRET, { expiresIn: '1d' });
       return res.json({
         success: true,
-        user: {
-          id: 0,
-          username: 'admin',
-          role: 'admin',
-          token: 'static-admin-token'
-        }
+        user: adminPayload,
+        token
       });
     }
     
@@ -137,14 +138,19 @@ exports.login = async (req, res) => {
     }
     
     console.log('Login successful for:', username);
+    const userPayload = {
+      id: user.id,
+      username: user.username,
+      role: effectiveRole
+    };
+    const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '1d' });
     res.json({
       success: true,
       user: {
-        id: user.id,
-        username: user.username,
-        role: effectiveRole,
+        ...userPayload,
         allowed_tabs: allowedTabs
-      }
+      },
+      token
     });
   } catch (err) {
     console.error('Login error:', err);
