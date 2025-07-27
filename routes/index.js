@@ -24,7 +24,7 @@ router.use('/strategy-master', strategyMasterRoutes);
 // Additional routes for full API coverage
 router.use('/accounts', require('./accounts'));
 router.use('/auth', require('./authRoutes'));
-router.use('/broker', require('./brokerRoutes'));
+router.use('/brokers', require('./brokerRoutes'));
 router.use('/counterparties', require('./counterparties'));
 router.use('/counterparty-individual', require('./counterpartyIndividualRoutes'));
 router.use('/counterparty-joint', require('./counterpartyJointRoutes'));
@@ -34,7 +34,8 @@ router.use('/limit-status', require('./limitStatusRoutes'));
 router.use('/money-market-deals', require('./moneyMarketDeals'));
 router.use('/securities', require('./securities'));
 router.use('/user', require('./userRoutes'));
-router.use('/voucher', require('./voucher'));
+// Mount voucher router under /money-market for correct nested voucher download route
+router.use('/money-market', require('./voucher'));
 router.use('/transaction-types', require('./transactionTypes'));
 // Note: transactionRoutes.js is skipped as transactions.js is already mounted.
 

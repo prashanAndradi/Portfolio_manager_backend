@@ -11,7 +11,7 @@ const companyInfo = {
   footer: '2025 All Rights Reserved'
 };
 
-router.get('/money-market/:deal_number/voucher', async (req, res) => {
+router.get('/:deal_number/voucher', async (req, res) => {
   const { deal_number } = req.params;
   try {
     // Fetch deal details

@@ -18,15 +18,14 @@ router.post('/', async (req, res) => {
 
     // Get max sequence for this date and product
     const [rows] = await pool.query(
-      'SELECT deal_number FROM money_market_deals WHERE trade_date = ? AND product_type = ? ORDER BY deal_number DESC LIMIT 1',
+      `SELECT MAX(CAST(RIGHT(deal_number, 4) AS UNSIGNED)) as maxSeq
+       FROM money_market_deals
+       WHERE trade_date = ? AND product_type = ?`,
       [deal.tradeDate, productCode]
     );
     let nextSeq = 1;
-    if (rows.length > 0) {
-      // Extract the last 4 digits from deal_number
-      const lastDealNumber = rows[0].deal_number;
-      const lastSeq = parseInt(lastDealNumber.slice(-4), 10);
-      nextSeq = lastSeq + 1;
+    if (rows.length > 0 && rows[0].maxSeq !== null) {
+      nextSeq = rows[0].maxSeq + 1;
     }
     const seqStr = String(nextSeq).padStart(4, '0');
     const dealNumber = `${dateStr}${productCode}${seqStr}`;

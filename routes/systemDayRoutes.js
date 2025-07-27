@@ -4,7 +4,7 @@ const { getSystemDay, setSystemDay } = require('../models/systemDayModel');
 const { checkAuth, checkAdmin } = require('../middleware/auth');
 
 // GET /api/system-day - get current system day
-router.get('/', checkAuth, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const day = await getSystemDay();
     if (!day) return res.status(404).json({ success: false, message: 'System day not found' });
