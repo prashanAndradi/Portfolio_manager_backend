@@ -12,6 +12,44 @@ dotenv.config();
 // Create Express app
 const app = express();
 
+// --- Swagger Setup ---
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
+
+const swaggerDefinition = {
+  openapi: '3.0.0',
+  info: {
+    title: 'Portfolio Manager API',
+    version: '1.0.0',
+    description: 'Professional OpenAPI documentation for the Portfolio Manager backend. All endpoints are documented to facilitate integration, testing, and onboarding.'
+  },
+  servers: [
+    {
+      url: 'http://localhost:3001/api',
+      description: 'Development server',
+    },
+  ],
+  components: {
+    securitySchemes: {
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+    },
+  },
+  security: [{ bearerAuth: [] }],
+};
+
+const swaggerOptions = {
+  swaggerDefinition,
+  apis: ['./routes/*.js', './models/*.js'], // Scan all route/model files
+};
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// --- End Swagger Setup ---
+
 // Enable CORS for all routes
 app.use(cors());
 

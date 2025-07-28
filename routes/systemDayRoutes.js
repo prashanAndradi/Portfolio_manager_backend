@@ -3,6 +3,28 @@ const router = express.Router();
 const { getSystemDay, setSystemDay } = require('../models/systemDayModel');
 const { checkAuth, checkAdmin } = require('../middleware/auth');
 
+/**
+ * @swagger
+ * /system-day:
+ *   get:
+ *     summary: Get current system day
+ *     description: Returns the current system day (public endpoint).
+ *     tags: [System Day]
+ *     responses:
+ *       200:
+ *         description: Current system day
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 system_day:
+ *                   type: string
+ *       404:
+ *         description: System day not found
+ */
 // GET /api/system-day - get current system day
 router.get('/', async (req, res) => {
   try {
@@ -14,6 +36,44 @@ router.get('/', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /system-day:
+ *   post:
+ *     summary: Set system day
+ *     description: Sets the system day (admin only, requires JWT).
+ *     tags: [System Day]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - system_date
+ *             properties:
+ *               system_date:
+ *                 type: string
+ *                 example: '2025-07-27'
+ *     responses:
+ *       200:
+ *         description: System day updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 system_day:
+ *                   type: string
+ *       400:
+ *         description: system_date required
+ *       401:
+ *         description: Unauthorized or forbidden
+ */
 // POST /api/system-day - set system day (admin only)
 router.post('/', checkAuth, checkAdmin, async (req, res) => {
   try {

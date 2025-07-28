@@ -4,6 +4,97 @@ const router = express.Router();
 // Import your DB connection (adjust path as needed)
 const pool = require('../db');
 
+/**
+ * @swagger
+ * /money-market-deals:
+ *   post:
+ *     summary: Create a new money market deal
+ *     description: Creates a new money market deal. Requires authentication.
+ *     tags:
+ *       - Money Market Deals
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - tradeDate
+ *               - valueDate
+ *               - maturityDate
+ *               - counterpartyId
+ *               - productType
+ *               - currency
+ *               - principalAmount
+ *               - interestRate
+ *               - tenor
+ *               - interestAmount
+ *               - maturityValue
+ *               - settlementMode
+ *             properties:
+ *               tradeDate:
+ *                 type: string
+ *                 example: '2025-07-24'
+ *               valueDate:
+ *                 type: string
+ *                 example: '2025-07-24'
+ *               maturityDate:
+ *                 type: string
+ *                 example: '2025-08-24'
+ *               counterpartyId:
+ *                 type: integer
+ *                 example: 1
+ *               productType:
+ *                 type: string
+ *                 example: MMAR
+ *               currency:
+ *                 type: string
+ *                 example: 'LKR'
+ *               principalAmount:
+ *                 type: number
+ *                 example: 1000000
+ *               interestRate:
+ *                 type: number
+ *                 example: 8.5
+ *               tenor:
+ *                 type: integer
+ *                 example: 30
+ *               interestAmount:
+ *                 type: number
+ *                 example: 7000
+ *               maturityValue:
+ *                 type: number
+ *                 example: 1007000
+ *               settlementMode:
+ *                 type: string
+ *                 example: 'RTGS'
+ *               remarks:
+ *                 type: string
+ *                 example: 'Test deal'
+ *               dealType:
+ *                 type: string
+ *                 example: 'primary'
+ *     responses:
+ *       201:
+ *         description: Deal created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 id:
+ *                   type: integer
+ *                 dealNumber:
+ *                   type: string
+ *       500:
+ *         description: Failed to create deal
+ */
 // POST /api/money-market-deals - Save a new deal
 router.post('/', async (req, res) => {
   const deal = req.body;
@@ -49,6 +140,34 @@ router.post('/', async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /money-market-deals:
+ *   get:
+ *     summary: List all money market deals
+ *     description: Returns a list of all money market deals. Requires authentication. Optional query param 'limit' to restrict results.
+ *     tags:
+ *       - Money Market Deals
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Limit the number of deals returned
+ *     responses:
+ *       200:
+ *         description: List of deals
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *       500:
+ *         description: Failed to retrieve deals
+ */
 // GET /api/money-market-deals - List all deals, or limit if ?limit=N
 router.get('/', async (req, res) => {
   try {

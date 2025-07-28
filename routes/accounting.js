@@ -216,18 +216,22 @@ router.get('/general-ledger', auth, async (req, res) => {
     
     if (startDate) {
       whereClause += ` AND le.entry_date >= ?`;
+      params.push(startDate);
     }
     
     if (endDate) {
       whereClause += ` AND le.entry_date <= ?`;
+      params.push(endDate);
     }
     
     if (accountId) {
       whereClause += ` AND le.account_id = ?`;
+      params.push(accountId);
     }
     
     if (transactionId) {
       whereClause += ` AND le.deal_number = ?`;
+      params.push(transactionId);
     }
     
     // Execute count query
