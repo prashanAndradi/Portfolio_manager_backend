@@ -9,6 +9,7 @@ const moneyMarketEodRoutes = require('./moneyMarketEodRoutes');
 const accountingRoutes = require('./accounting');
 const transactionsRoutes = require('./transactions');
 const strategyMasterRoutes = require('./strategyMasterRoutes');
+const reportMoneyMarketRoutes = require('./reportMoneyMarket');
 
 // Portfolio Master API
 router.use('/portfolio-master', portfolioMasterRoutes);
