@@ -13,17 +13,20 @@ router.get('/', async (req, res) => {
         mmd.maturity_date,
         mmd.tenor,
         mmd.product_type,
-        cp.name AS counterparty,
+        cp_all.counterparty_name AS counterparty,
         mmd.currency,
         mmd.principal_amount,
         mmd.interest_rate,
         mmd.maturity_value AS maturity_amount,
         (mmd.principal_amount + mmd.maturity_value) AS total_receivable,
-        mmd.limit_utilization,
-        u.full_name AS authorized_user
+        u.username AS authorized_user
       FROM money_market_deals mmd
-      LEFT JOIN counterparty_master cp ON mmd.counterparty_id = cp.id
-      LEFT JOIN users u ON mmd.authorized_user_id = u.id
+      LEFT JOIN (
+        SELECT id, short_name AS counterparty_name FROM counterparty_master_individual
+        UNION ALL
+        SELECT id, short_name AS counterparty_name FROM counterparty_master_joint
+      ) cp_all ON mmd.counterparty_id = cp_all.id
+      LEFT JOIN users u ON mmd.authorized_by = u.id
       ORDER BY mmd.trade_date DESC
     `;
     const [rows] = await db.query(sql);

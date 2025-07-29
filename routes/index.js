@@ -40,4 +40,7 @@ router.use('/money-market', require('./voucher'));
 router.use('/transaction-types', require('./transactionTypes'));
 // Note: transactionRoutes.js is skipped as transactions.js is already mounted.
 
+// Mount Money Market report API
+router.use('/reports/money-market', reportMoneyMarketRoutes);
+
 module.exports = router;
