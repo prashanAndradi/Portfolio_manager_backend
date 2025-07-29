@@ -9,6 +9,7 @@ const moneyMarketEodRoutes = require('./moneyMarketEodRoutes');
 const accountingRoutes = require('./accounting');
 const transactionsRoutes = require('./transactions');
 const strategyMasterRoutes = require('./strategyMasterRoutes');
+const reportMoneyMarketRoutes = require('./reportMoneyMarket');
 
 // Portfolio Master API
 router.use('/portfolio-master', portfolioMasterRoutes);
@@ -38,5 +39,8 @@ router.use('/user', require('./userRoutes'));
 router.use('/money-market', require('./voucher'));
 router.use('/transaction-types', require('./transactionTypes'));
 // Note: transactionRoutes.js is skipped as transactions.js is already mounted.
+
+// Mount Money Market report API
+router.use('/reports/money-market', reportMoneyMarketRoutes);
 
 module.exports = router;
