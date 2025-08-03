@@ -43,4 +43,7 @@ router.use('/transaction-types', require('./transactionTypes'));
 // Mount Money Market report API
 router.use('/reports/money-market', reportMoneyMarketRoutes);
 
+// Mount GSec workflow API
+router.use('/gsec', require('./gsecRoutes'));
+
 module.exports = router;

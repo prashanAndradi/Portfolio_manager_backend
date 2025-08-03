@@ -435,4 +435,52 @@ Gsec.getLatestDealNumber = async (date) => {
   return results[0] ? results[0].deal_number : null;
 };
 
+/**
+ * Get all GSec transactions at a specific approval level
+ */
+Gsec.getTransactionsByApprovalLevel = async (approvalLevel) => {
+  const sql = `SELECT * FROM gsec WHERE current_approval_level = ? ORDER BY id DESC`;
+  try {
+    const [results] = await db.query(sql, [approvalLevel]);
+    // Format results for frontend display (truncate/format decimals)
+    return results.map(transaction => ({
+      ...transaction,
+      accruedInterest: transaction.accrued_interest ? parseFloat(transaction.accrued_interest).toFixed(4) : null,
+      cleanPrice: transaction.clean_price ? parseFloat(transaction.clean_price).toFixed(4) : null,
+      dirtyPrice: transaction.dirty_price ? parseFloat(transaction.dirty_price).toFixed(4) : null,
+      faceValue: transaction.face_value ? parseFloat(transaction.face_value).toFixed(4) : null,
+      dealNumber: transaction.deal_number,
+      tradeDate: transaction.trade_date,
+      security: transaction.security || transaction.isin,
+      status: transaction.status
+    }));
+  } catch (error) {
+    console.error('Error in getTransactionsByApprovalLevel:', error);
+    throw error;
+  }
+};
+
+/**
+ * Advance approval level for a transaction (1->2->3, then mark as final)
+ */
+Gsec.advanceApprovalLevel = async (id) => {
+  // Fetch the transaction
+  const [results] = await db.query('SELECT * FROM gsec WHERE id = ?', [id]);
+  if (!results.length) return null;
+  const tx = results[0];
+  let newLevel = tx.current_approval_level;
+  let updateFields = '';
+  if (tx.current_approval_level < 3) {
+    newLevel = tx.current_approval_level + 1;
+    updateFields = ', current_approval_level = ' + newLevel;
+  } else {
+    // Optionally set a final_approved flag or update status
+    updateFields = ", status = 'final_approved'";
+  }
+  await db.query(`UPDATE gsec SET updated_at = NOW()${updateFields} WHERE id = ?`, [id]);
+  // Return updated transaction
+  const [updated] = await db.query('SELECT * FROM gsec WHERE id = ?', [id]);
+  return updated[0];
+};
+
 module.exports = Gsec;
