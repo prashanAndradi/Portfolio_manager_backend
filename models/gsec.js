@@ -470,16 +470,36 @@ Gsec.advanceApprovalLevel = async (id) => {
   const tx = results[0];
   let newLevel = tx.current_approval_level;
   let updateFields = '';
+  let finalApproval = false;
   if (tx.current_approval_level < 3) {
     newLevel = tx.current_approval_level + 1;
     updateFields = ', current_approval_level = ' + newLevel;
   } else {
-    // Optionally set a final_approved flag or update status
+    // Set status to final_approved on last approval
     updateFields = ", status = 'final_approved'";
+    finalApproval = true;
   }
   await db.query(`UPDATE gsec SET updated_at = NOW()${updateFields} WHERE id = ?`, [id]);
   // Return updated transaction
   const [updated] = await db.query('SELECT * FROM gsec WHERE id = ?', [id]);
+
+  // If finally approved, post ledger entry
+  if (finalApproval) {
+    try {
+      const ledgerController = require('../controllers/ledgerController');
+      await ledgerController.postLedgerEntry({
+        date: new Date().toISOString().slice(0, 10),
+        dr_account: '1-034-01-01-01', // Asset TBonds
+        cr_account: '1-666-01-01-01', // Asset Seylan Bank 123 A/C
+        amount: Number(updated[0].face_value),
+        deal_id: updated[0].deal_number,
+        description: 'GSec Purchase - Final Approval'
+      });
+    } catch (err) {
+      console.error('Failed to post GSec ledger entry:', err);
+      // Optionally: update transaction with error status/field
+    }
+  }
   return updated[0];
 };
 
