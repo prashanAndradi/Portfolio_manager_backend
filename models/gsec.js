@@ -24,14 +24,25 @@ const Gsec = {
     
     const currentDate = new Date();
     
+    // Calculate per_day_accrual: couponInterest / numberOfDaysForCouponPeriod
+    let perDayAccrual = null;
+    if (data.couponInterest && data.numberOfDaysForCouponPeriod) {
+      const ci = parseFloat(data.couponInterest);
+      const nd = parseFloat(data.numberOfDaysForCouponPeriod);
+      if (ci && nd) {
+        perDayAccrual = Math.floor((ci / nd) * 100000000) / 100000000; // truncate to 8 decimals
+      }
+    }
+    data.per_day_accrual = perDayAccrual;
+
     const sql = `INSERT INTO gsec (
       trade_type, transaction_type, counterparty, deal_number, isin, face_value, value_date, next_coupon_date, 
       last_coupon_date, number_of_days_interest_accrued, number_of_days_for_coupon_period, accrued_interest, 
       coupon_interest, clean_price, dirty_price, accrued_interest_calculation, accrued_interest_six_decimals, 
       accrued_interest_for_100, settlement_amount, settlement_mode, issue_date, maturity_date, coupon_dates, 
       yield, brokerage, currency, portfolio, strategy, broker, accrued_interest_adjustment, clean_price_adjustment, 
-      status, created_by, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      per_day_accrual, status, created_by, created_at, current_approval_level
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     
     const values = [
       data.tradeType,
@@ -65,9 +76,11 @@ const Gsec = {
       data.broker,
       data.accruedInterestAdjustment,
       data.cleanPriceAdjustment,
+      data.per_day_accrual,
       'pending', // Default status for authorization workflow
       data.userId || null, // Creator's user ID
-      currentDate // Creation timestamp
+      currentDate, // Creation timestamp
+      'front_office' // Default approval level
     ];
     
     try {
@@ -398,21 +411,46 @@ const Gsec = {
    * Update status of a GSec transaction (approve/reject)
    */
   updateStatus: async (id, data) => {
+    // Determine the new approval level based on current status and action
+    let newApprovalLevel = data.current_approval_level || 1;
+    let newStatus = data.status;
+    
+    if (data.status === 'approved') {
+      // Advance to next approval level
+      if (newApprovalLevel === 1) {
+        newApprovalLevel = 2;
+        newStatus = 'pending';
+      } else if (newApprovalLevel === 2) {
+      } else if (data.current_approval_level === 2) {
+        newApprovalLevel = 3;
+        newStatus = 'pending';
+      } else if (data.current_approval_level === 3) {
+        newApprovalLevel = 3; // Stay at final
+        newStatus = 'approved';
+      }
+    } else if (data.status === 'rejected') {
+      // Reset to front office on rejection
+      newApprovalLevel = 1;
+      newStatus = 'rejected';
+    }
+    
     const sql = `
       UPDATE gsec 
       SET 
         status = ?,
         comment = ?,
         authorized_by = ?,
-        authorized_at = ?
+        authorized_at = ?,
+        current_approval_level = ?
       WHERE id = ?
     `;
     
     const values = [
-      data.status,
+      newStatus,
       data.comment,
       data.authorized_by,
       data.authorized_at,
+      newApprovalLevel,
       id
     ];
     

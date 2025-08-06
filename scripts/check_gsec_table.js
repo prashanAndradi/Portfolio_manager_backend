@@ -53,7 +53,8 @@ async function checkAndFixGsecTable() {
           updated_by INT,
           updated_at DATETIME,
           authorized_by INT,
-          authorized_at DATETIME
+          authorized_at DATETIME,
+          current_approval_level VARCHAR(50) DEFAULT 'front_office'
         )
       `;
       
@@ -83,7 +84,7 @@ async function checkAndFixGsecTable() {
       const columnNames = columns.map(col => col.Field);
       
       // Check for required authorization columns
-      const requiredColumns = ['status', 'comment', 'created_by', 'created_at', 'authorized_by', 'authorized_at'];
+      const requiredColumns = ['status', 'comment', 'created_by', 'created_at', 'authorized_by', 'authorized_at', 'current_approval_level'];
       const missingColumns = requiredColumns.filter(col => !columnNames.includes(col));
       
       if (missingColumns.length > 0) {
@@ -111,6 +112,9 @@ async function checkAndFixGsecTable() {
               break;
             case 'authorized_at':
               alterSQL = `ALTER TABLE gsec ADD COLUMN authorized_at DATETIME`;
+              break;
+            case 'current_approval_level':
+              alterSQL = `ALTER TABLE gsec ADD COLUMN current_approval_level VARCHAR(50) DEFAULT 'front_office'`;
               break;
           }
           

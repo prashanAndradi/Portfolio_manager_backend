@@ -10,7 +10,8 @@ const columnsToAdd = [
   { name: 'updated_by', type: 'INT', after: 'created_at' },
   { name: 'updated_at', type: 'DATETIME', after: 'updated_by' },
   { name: 'authorized_by', type: 'INT', after: 'updated_at' },
-  { name: 'authorized_at', type: 'DATETIME', after: 'authorized_by' }
+  { name: 'authorized_at', type: 'DATETIME', after: 'authorized_by' },
+  { name: 'current_approval_level', type: 'VARCHAR(50) DEFAULT "front_office"', after: 'authorized_at' }
 ];
 
 // Define indexes to create
