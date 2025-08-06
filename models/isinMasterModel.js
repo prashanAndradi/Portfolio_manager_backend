@@ -14,7 +14,10 @@ const IsinMaster = {
       data.coupon_date_2,
       data.day_basis,
       data.currency
-    ], callback);
+    ], (err, result) => {
+      // Always call the callback, never throw or reject
+      return callback(err, result);
+    });
   },
   getAll: async () => {
     const [results] = await db.query('SELECT * FROM isin_master');
