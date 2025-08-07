@@ -1,5 +1,6 @@
 const IsinMaster = require('../models/isinMasterModel');
 const IsinCouponSchedule = require('../models/isinCouponSchedule');
+const db = require('../config/database');
 
 const Gsec = require('../models/gsec');
 
@@ -272,7 +273,7 @@ module.exports = {
    */
   updateGsecTransactionStatus: async (req, res) => {
     const id = req.params.id;
-    const { status, comment, userId } = req.body;
+    const { status, comment, userId, current_approval_level } = req.body;
     
     // Validate status
     if (!['approved', 'rejected'].includes(status)) {
@@ -284,14 +285,24 @@ module.exports = {
       return res.status(400).json({ success: false, error: 'Comment is required for rejected transactions.' });
     }
     
+    try {
+      // First get the current transaction to determine the approval level
+      const [currentTransaction] = await db.query('SELECT * FROM gsec WHERE id = ?', [id]);
+      
+      if (currentTransaction.length === 0) {
+        return res.status(404).json({ success: false, error: 'Transaction not found' });
+      }
+      
+      const transaction = currentTransaction[0];
+    
     const updateData = {
       status,
       comment: comment || '',
       authorized_by: userId || null,
-      authorized_at: new Date()
+        authorized_at: new Date(),
+        current_approval_level: transaction.current_approval_level || 'front_office'
     };
     
-    try {
       const result = await Gsec.updateStatus(id, updateData);
       if (result.affectedRows === 0) {
         return res.status(404).json({ success: false, error: 'Transaction not found' });
