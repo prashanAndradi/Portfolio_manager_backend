@@ -16,8 +16,8 @@ exports.getGsecReport = async (req, res) => {
     } = req.query;
 
     // Validate required params
-    if (!asAtDate) {
-      return res.status(400).json({ error: 'asAtDate is required' });
+    if (!asAtDate && !isin) {
+      return res.status(400).json({ error: 'Either asAtDate or ISIN is required' });
     }
 
     // Fetch report data

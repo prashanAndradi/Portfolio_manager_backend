@@ -146,7 +146,17 @@ exports.export = async (format, data) => {
       doc.moveTo(startX, y + rowHeight).lineTo(x, y + rowHeight).stroke('#e5e7eb');
       y += rowHeight;
     });
+    // Calculate total balance
+    const totalBalance = data.reduce((sum, row) => sum + (Number(row.balance) || 0), 0);
+    const formattedTotalBalance = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.trunc(totalBalance * 100) / 100);
     doc.y = y + 10;
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#140ce7');
+    const totalText = `Total Balance: ${formattedTotalBalance}`;
+    // Center the text on the A4 page
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const textWidth = doc.widthOfString(totalText);
+    const centerX = doc.page.margins.left + (pageWidth - textWidth) / 2;
+    doc.text(totalText, centerX, doc.y, { align: 'left' });
     doc.fillColor('#222');
     doc.end();
     return await new Promise(resolve => {
