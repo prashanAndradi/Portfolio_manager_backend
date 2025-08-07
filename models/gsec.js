@@ -41,8 +41,8 @@ const Gsec = {
       coupon_interest, clean_price, dirty_price, accrued_interest_calculation, accrued_interest_six_decimals, 
       accrued_interest_for_100, settlement_amount, settlement_mode, issue_date, maturity_date, coupon_dates, 
       yield, brokerage, currency, portfolio, strategy, broker, accrued_interest_adjustment, clean_price_adjustment, 
-      per_day_accrual, status, created_by, created_at, current_approval_level
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      per_day_accrual, status, created_by, created_at, current_approval_level, custodian
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     
     const values = [
       data.tradeType,
@@ -80,7 +80,8 @@ const Gsec = {
       'pending', // Default status for authorization workflow
       data.userId || null, // Creator's user ID
       currentDate, // Creation timestamp
-      'front_office' // Default approval level
+      'front_office', // Default approval level
+      data.custodian || null
     ];
     
     try {
@@ -382,6 +383,7 @@ const Gsec = {
     Object.keys(data).forEach(key => {
       // Skip the id field and any fields that are not DB columns
       if (key !== 'id' && key !== 'userId') {
+
         // Convert camelCase to snake_case for DB fields
         const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
         setClauses.push(`${dbField} = ?`);
