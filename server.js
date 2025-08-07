@@ -59,6 +59,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 
 // Import routes
 const accountRoutes = require('./routes/accounts');
+const reportRoutes = require('./routes/reportRoutes');
 const transactionTypeRoutes = require('./routes/transactionTypes');
 const securityRoutes = require('./routes/securities');
 const counterpartyRoutes = require('./routes/counterparties');
@@ -77,7 +78,8 @@ const paymentMasterRoutes = require('./routes/paymentMasterRoutes');
 const strategyMasterRoutes = require('./routes/strategyMasterRoutes');
 
 // Use routes
-app.use('/api/auth', authRoutes); // <-- Ensure /api/auth/login works
+app.use('/api/accounts', accountRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api', require('./routes/index'));
 app.use('/api/money-market-deals', moneyMarketDealsRoutes);
 
