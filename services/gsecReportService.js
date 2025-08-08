@@ -28,6 +28,13 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
   }
   sql += ' ORDER BY isin, maturity_date';
 
+    if (deal_number) {
+    sql += ' AND deal number = ?';
+    params.push(deal_number);
+  }
+  sql += ' ORDER BY deal number, deal_number';
+    
+  
   // Pagination
   const offset = (page - 1) * pageSize;
   sql += ' LIMIT ? OFFSET ?';
