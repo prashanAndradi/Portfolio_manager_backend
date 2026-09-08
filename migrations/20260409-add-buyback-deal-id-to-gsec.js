@@ -27,10 +27,14 @@ async function run() {
   console.log('Added gsec.buyback_deal_id and index idx_gsec_buyback_deal_id.');
 }
 
-run()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error('Failed migration 20260409-add-buyback-deal-id-to-gsec:', err);
-    process.exit(1);
-  });
+if (require.main === module) {
+  run()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('Failed migration 20260409-add-buyback-deal-id-to-gsec:', err);
+      process.exit(1);
+    });
+}
+
+module.exports = run;
 
