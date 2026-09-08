@@ -134,10 +134,13 @@ async function createAccountingTables() {
     console.log('All accounting tables created successfully');
   } catch (error) {
     console.error('Error creating accounting tables:', error);
-  } finally {
-    process.exit();
+    throw error;
   }
 }
 
 // Run the migration
-createAccountingTables();
+if (require.main === module) {
+  createAccountingTables().then(() => process.exit(0)).catch(() => process.exit(1));
+}
+
+module.exports = createAccountingTables;
