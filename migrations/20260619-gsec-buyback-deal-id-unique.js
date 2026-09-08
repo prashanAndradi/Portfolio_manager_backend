@@ -1,5 +1,14 @@
 /**
- * Deduplicate leg2 GSEC rows per buyback_deal_id and enforce one link per buyback.
+ * Deduplicate leg2 GSEC rows per buyback_deal_id.
+ *
+ * This used to also create a single-column UNIQUE index on
+ * gsec(buyback_deal_id) - but a buyback legitimately has one 'Buy' row and
+ * one 'Sell' row sharing the same buyback_deal_id (opening and closing
+ * legs), so that index was wrong and failed on every real buyback pair.
+ * 20260803-gsec-buyback-deal-id-txn-unique.js (which runs right after this
+ * one) creates the correct two-column index on
+ * (buyback_deal_id, transaction_type) instead - this file only handles
+ * clearing cancelled rows and cancelling genuine same-type duplicates.
  */
 const db = require('../config/database');
 
@@ -52,23 +61,6 @@ async function run() {
         [cancelId]
       );
     }
-  }
-
-  const [idxRows] = await db.query(
-    `SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'gsec'
-       AND INDEX_NAME = 'uq_gsec_buyback_deal_id'
-     LIMIT 1`
-  );
-
-  if (!idxRows.length) {
-    await db.query(
-      `CREATE UNIQUE INDEX uq_gsec_buyback_deal_id ON gsec (buyback_deal_id)`
-    );
-    console.log('Created unique index uq_gsec_buyback_deal_id on gsec(buyback_deal_id)');
-  } else {
-    console.log('Unique index uq_gsec_buyback_deal_id already exists');
   }
 }
 
