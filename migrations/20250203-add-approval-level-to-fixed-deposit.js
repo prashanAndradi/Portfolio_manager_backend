@@ -6,7 +6,7 @@ async function addApprovalLevelToFixedDeposit() {
     const [columns] = await db.query(`
       SELECT COLUMN_NAME
       FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = 'itms'
+      WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME = 'fixed_deposit_requests'
         AND COLUMN_NAME = 'current_approval_level'
     `);
@@ -14,7 +14,7 @@ async function addApprovalLevelToFixedDeposit() {
     if (columns.length === 0) {
       // Add current_approval_level column
       await db.query(`
-        ALTER TABLE itms.fixed_deposit_requests
+        ALTER TABLE fixed_deposit_requests
         ADD COLUMN current_approval_level VARCHAR(50) DEFAULT 'back_office_final' AFTER status
       `);
       console.log('Added current_approval_level column to fixed_deposit_requests table');
