@@ -8,6 +8,7 @@
 
 const Gsec = require('../models/gsec');
 const db = require('../config/database');
+const { normalizeUserId } = require('../utils/requestUser');
 const {
   getCouponPeriodLengthDaysFromIsinSchedule,
   resolveIsinCouponDates,
@@ -187,7 +188,7 @@ async function createBuySellLeg1BuyLetterGsec({
     tradeDate: buybackDeal.leg1_trade_date || buybackDeal.leg1_value_date,
     // Letter-only: zero remaining so it never looks sellable if report filter misses it
     remaining_face_value: 0,
-    userId: userId || 1,
+    userId: normalizeUserId(userId),
     current_approval_level: null,
     status: 'final_approved',
     fundMovement: buybackDeal.fund_movement,
@@ -294,7 +295,7 @@ async function createBuySellLeg2SellLetterGsec({
     tradeDate: buybackDeal.leg2_trade_date || buybackDeal.leg2_value_date,
     buyDealNumber: null,
     sellDealAllocations: null,
-    userId: userId || 1,
+    userId: normalizeUserId(userId),
     current_approval_level: null,
     status: 'final_approved',
     fundMovement: buybackDeal.fund_movement,

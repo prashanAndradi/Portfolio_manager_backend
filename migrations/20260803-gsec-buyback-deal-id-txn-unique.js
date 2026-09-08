@@ -36,9 +36,13 @@ async function run() {
   }
 }
 
-run()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error('Migration 20260803-gsec-buyback-deal-id-txn-unique failed:', err);
-    process.exit(1);
-  });
+if (require.main === module) {
+  run()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error('Migration 20260803-gsec-buyback-deal-id-txn-unique failed:', err);
+      process.exit(1);
+    });
+}
+
+module.exports = run;

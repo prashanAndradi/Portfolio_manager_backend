@@ -59,16 +59,28 @@ async function createAccountMappingsTable() {
       console.log('Note: chart_of_accounts may not exist yet, FK constraint will be deferred');
     }
     
-    // Add foreign key constraint separately (will be deferred if chart_of_accounts doesn't exist)
-    // The migration runner will automatically defer this if chart_of_accounts doesn't exist yet
-    // OR if there are existing rows with invalid account_code references
-    await db.query(`
-      ALTER TABLE account_mappings
-      ADD CONSTRAINT fk_account_mappings_account_code
-      FOREIGN KEY (account_code) REFERENCES chart_of_accounts(account_code) 
-      ON DELETE RESTRICT ON UPDATE CASCADE
-    `);
-    console.log('Foreign key constraint added successfully');
+    // Add foreign key constraint separately. Best-effort only: despite the
+    // comment this used to have claiming "the migration runner will
+    // automatically defer this", that deferred-statement mechanism only
+    // applies to raw .sql files parsed by the runner - it has no visibility
+    // into queries made from inside a .js migration's own function body, so
+    // this call was never actually deferred. chart_of_accounts is created by
+    // a LATER migration in the sequence (create-chart-of-accounts.sql, via
+    // getMigrationFiles()'s special-case reordering), so this FK add is
+    // expected to fail here on a fresh database - that must never block
+    // every other table's migration behind it in the chain.
+    try {
+      await db.query(`
+        ALTER TABLE account_mappings
+        ADD CONSTRAINT fk_account_mappings_account_code
+        FOREIGN KEY (account_code) REFERENCES chart_of_accounts(account_code)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+      `);
+      console.log('Foreign key constraint added successfully');
+    } catch (fkError) {
+      console.warn('⚠ Skipping account_mappings FK constraint for now (non-fatal):', fkError.message);
+      console.warn('  It will be added once chart_of_accounts exists with an index on account_code.');
+    }
     
     console.log('Note: Default account mappings should be added via API or admin interface after chart_of_accounts is populated');
 

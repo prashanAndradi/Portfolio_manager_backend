@@ -8,7 +8,7 @@ async function ensureFundCentreMasterTable() {
     const [tables] = await db.query(`
       SELECT TABLE_NAME 
       FROM INFORMATION_SCHEMA.TABLES 
-      WHERE TABLE_SCHEMA = 'itms' 
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'fund_centre_master'
     `);
 
@@ -16,7 +16,7 @@ async function ensureFundCentreMasterTable() {
       // Create table if it doesn't exist
       console.log('Creating fund_centre_master table...');
       await db.query(`
-        CREATE TABLE IF NOT EXISTS itms.fund_centre_master (
+        CREATE TABLE IF NOT EXISTS fund_centre_master (
           id INT NOT NULL AUTO_INCREMENT,
           name VARCHAR(255) NOT NULL,
           city VARCHAR(100) NULL,
@@ -54,14 +54,14 @@ async function ensureFundCentreMasterTable() {
       const [columns] = await db.query(`
         SELECT COLUMN_NAME 
         FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = 'itms' 
+        WHERE TABLE_SCHEMA = DATABASE()
         AND TABLE_NAME = 'fund_centre_master' 
         AND COLUMN_NAME = ?
       `, [col.name]);
 
       if (columns.length === 0) {
         await db.query(`
-          ALTER TABLE itms.fund_centre_master 
+          ALTER TABLE fund_centre_master
           ADD COLUMN \`${col.name}\` ${col.type} AFTER \`${col.after}\`
         `);
         console.log(`✓ Added ${col.name} column to fund_centre_master`);

@@ -8,7 +8,7 @@ async function createTransactionDocumentsTable() {
     const [tables] = await db.query(`
       SELECT TABLE_NAME 
       FROM INFORMATION_SCHEMA.TABLES 
-      WHERE TABLE_SCHEMA = 'itms' 
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = 'transaction_documents'
     `);
 
@@ -16,7 +16,7 @@ async function createTransactionDocumentsTable() {
       // Create table if it doesn't exist
       console.log('Creating transaction_documents table...');
       await db.query(`
-        CREATE TABLE IF NOT EXISTS itms.transaction_documents (
+        CREATE TABLE IF NOT EXISTS transaction_documents (
           id INT NOT NULL AUTO_INCREMENT,
           transaction_type VARCHAR(50) NOT NULL,
           transaction_id VARCHAR(255) NOT NULL,

@@ -136,12 +136,16 @@ async function createCashflowTables() {
 }
 
 // Run the migration
-createCashflowTables()
-  .then(() => {
-    console.log('Cashflow migration completed successfully!');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('Cashflow migration failed:', error);
-    process.exit(1);
-  });
+if (require.main === module) {
+  createCashflowTables()
+    .then(() => {
+      console.log('Cashflow migration completed successfully!');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('Cashflow migration failed:', error);
+      process.exit(1);
+    });
+}
+
+module.exports = createCashflowTables;

@@ -1,6 +1,7 @@
 const MaturityAmountService = require('../services/maturityAmountService');
 const CashflowCaptureService = require('../services/cashflowCaptureService');
 const { postRepoMaturityLedger } = require('../services/repoMaturityLedgerService');
+const { resolveRequestUserId } = require('../utils/requestUser');
 
 const toYmd = (value) => {
   if (!value) return null;
@@ -3253,7 +3254,7 @@ const {
 } = require('../services/gsecCouponPeriod');
 const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
     const { deals } = req.body || {};
-    const userId = req.user?.id || 1;
+    const userId = resolveRequestUserId(req);
     const [buybackLinkColRows] = await db.query(
       `SELECT 1
        FROM INFORMATION_SCHEMA.COLUMNS

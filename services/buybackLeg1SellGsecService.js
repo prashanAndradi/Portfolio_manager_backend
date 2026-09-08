@@ -8,6 +8,7 @@
 
 const Gsec = require('../models/gsec');
 const db = require('../config/database');
+const { normalizeUserId } = require('../utils/requestUser');
 const dealConfirmationService = require('./dealConfirmationService');
 const {
   getCouponPeriodLengthDaysFromIsinSchedule,
@@ -219,7 +220,7 @@ async function createBuybackLeg1SellGsec({
     tradeDate: buybackDeal.leg1_trade_date || buybackDeal.leg1_value_date,
     buyDealNumber: sellAllocs[0].deal_number,
     sellDealAllocations: sellAllocs,
-    userId: userId || 1,
+    userId: normalizeUserId(userId),
     current_approval_level: null,
     status: 'final_approved',
     fundMovement: buybackDeal.fund_movement,

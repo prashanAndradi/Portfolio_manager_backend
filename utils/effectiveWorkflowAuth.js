@@ -3,13 +3,22 @@
 const db = require('../config/database');
 
 // Same order as login: a user with several assignments gets the highest workflow role.
+// The middle_office_* tiers are listed last deliberately: middle office is an
+// independent oversight axis, not a deal-workflow tier, so a user holding both
+// a deal-workflow role and a middle-office assignment should still resolve to
+// the deal-workflow role as their `effectiveRole` (nav/landing-page identity).
+// Middle-office gating never relies on `effectiveRole` - see isMiddleOffice()
+// in utils/workflowStageAuth.js, which checks assignment membership directly.
 const ROLE_PRIORITY = [
   'back_office_final',
   'back_office_verifier',
   'back_office',
   'front_office',
   'front_office_verifier',
-  'authorizer'
+  'authorizer',
+  'middle_office_manager',
+  'middle_office_officer',
+  'middle_office_user'
 ];
 
 function parsePages(value) {
@@ -61,7 +70,13 @@ async function resolveEffectiveWorkflowAuth(userId) {
       }
     }
     effectiveRole = best.role;
-    allowedTabs = Array.from(new Set([...allowedTabs, ...parsePages(best.allowed_pages)]));
+    // Merge allowed_pages from EVERY assignment, not just the highest-priority
+    // ("best") one - a user can hold multiple independent assignments at once
+    // (e.g. back_office_verifier for deal approval AND middle_office_officer
+    // for oversight), and must see pages granted under either. Only
+    // `effectiveRole` itself is winner-take-all (nav/landing identity).
+    const allAssignmentPages = assignments.flatMap((a) => parsePages(a.allowed_pages));
+    allowedTabs = Array.from(new Set([...allowedTabs, ...allAssignmentPages]));
   }
 
   return {

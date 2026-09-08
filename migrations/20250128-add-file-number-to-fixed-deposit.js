@@ -11,14 +11,14 @@ async function addFileNumberToFixedDeposit() {
     const [columns] = await db.query(`
       SELECT COLUMN_NAME
       FROM INFORMATION_SCHEMA.COLUMNS
-      WHERE TABLE_SCHEMA = 'itms'
+      WHERE TABLE_SCHEMA = DATABASE()
       AND TABLE_NAME = ?
       AND COLUMN_NAME = ?
     `, [tableName, columnName]);
 
     if (columns.length === 0) {
       await db.query(`
-        ALTER TABLE itms.??
+        ALTER TABLE ??
         ADD COLUMN ?? VARCHAR(100) NULL AFTER request_no
       `, [tableName, columnName]);
       console.log(`✓ Added ${columnName} column to itms.${tableName}`);

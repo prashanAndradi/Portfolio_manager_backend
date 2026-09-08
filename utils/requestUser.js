@@ -12,6 +12,16 @@ function parseHeaderUser(req) {
   }
 }
 
+/**
+ * A usable user id, or null. Never substitutes a placeholder account -
+ * an unattributable record must stay NULL rather than be pinned on a real user.
+ */
+function normalizeUserId(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function resolveRequestUserId(req) {
   const body = req.body || {};
   const headerUser = parseHeaderUser(req);
@@ -26,9 +36,8 @@ function resolveRequestUserId(req) {
     body.createdBy
   ];
   for (const raw of candidates) {
-    if (raw === null || raw === undefined || raw === '') continue;
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return n;
+    const n = normalizeUserId(raw);
+    if (n !== null) return n;
   }
   return null;
 }
@@ -37,4 +46,4 @@ function resolveRequestUsername(req) {
   return req.user?.username || req.body?.username || null;
 }
 
-module.exports = { resolveRequestUserId, resolveRequestUsername };
+module.exports = { resolveRequestUserId, resolveRequestUsername, normalizeUserId };

@@ -7,7 +7,9 @@ const Gsec = require('../models/gsec');
 const holidayValidationService = require('../services/holidayValidationService');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
 const { resolveRequestUserId } = require('../utils/requestUser');
-const { actorCanActAtStage } = require('../utils/workflowStageAuth');
+const { actorCanActAtStage, requiredRolesForStage } = require('../utils/workflowStageAuth');
+const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
+const { checkApprovalLimit } = require('../services/approvalLimitService');
 
 module.exports = {
   // Save both legs of a G-Sec buyback as a single row in buyback_gsec
@@ -441,8 +443,30 @@ module.exports = {
       
       // Clear the timeout
       clearTimeout(timeout);
-      
-      res.json({ success: true, message: 'Gsec transaction saved', id: result.insertId });
+
+      // Dealer-limit check runs AFTER commit and is fully best-effort: a
+      // breach never blocks the save (deal is already committed above), it
+      // only adds an informational warning to the response + notifies the
+      // dealer and Middle Office.
+      let limitWarning = null;
+      try {
+        const dealerId = formData.created_by;
+        const amount = parseFloat(req.body.faceValue) || 0;
+        const check = await checkDealerLimitAndNotify({
+          userId: dealerId,
+          productType: 'gsec',
+          dealNumber: req.body.dealNumber || req.body.deal_number || null,
+          amount,
+          currency: req.body.currency || 'LKR'
+        });
+        if (check.breached) {
+          limitWarning = { message: check.message, limit: check.limit, amount: check.amount };
+        }
+      } catch (limitErr) {
+        console.error('[saveGsec] Dealer limit check failed (non-fatal):', limitErr.message);
+      }
+
+      res.json({ success: true, message: 'Gsec transaction saved', id: result.insertId, limitWarning });
     } catch (err) {
       // Clear the timeout
       clearTimeout(timeout);
@@ -682,6 +706,29 @@ module.exports = {
           success: false,
           error: `Access denied: role required for the ${currentLevel} stage.`
         });
+      }
+
+      // An authorizer needs enough of their OWN configured limit to advance a
+      // deal (rejecting never needs it - only "proceeding" does).
+      if (status === 'approved') {
+        const limitCheck = await checkApprovalLimit({
+          actor,
+          requiredRoles: requiredRolesForStage(currentLevel),
+          dealAmount: Number(transaction.face_value) || 0,
+          dealNumber: transaction.deal_number,
+          productType: 'gsec',
+          stageKey: currentLevel
+        });
+        if (!limitCheck.ok) {
+          return res.status(403).json({
+            success: false,
+            limitExceeded: true,
+            error: limitCheck.message,
+            yourLimit: limitCheck.yourLimit,
+            dealAmount: limitCheck.dealAmount,
+            eligibleApprovers: limitCheck.eligibleApprovers
+          });
+        }
       }
 
     // Pass approved/rejected; Gsec.updateStatus advances 3-tier (front_office -> back_office_verifier -> back_office_final -> final_approved)
