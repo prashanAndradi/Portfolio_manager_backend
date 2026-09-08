@@ -8,7 +8,8 @@ async function updateTransactionsTable() {
     const [columns] = await db.query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'transactions' 
+      WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'transactions'
       AND COLUMN_NAME = 'status'
     `);
     
@@ -28,7 +29,8 @@ async function updateTransactionsTable() {
     const [authColumns] = await db.query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'transactions' 
+      WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'transactions'
       AND COLUMN_NAME = 'authorization_status'
     `);
     
@@ -47,7 +49,8 @@ async function updateTransactionsTable() {
     const [commentColumns] = await db.query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
-      WHERE TABLE_NAME = 'transactions' 
+      WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'transactions'
       AND COLUMN_NAME = 'comment'
     `);
     
@@ -66,9 +69,12 @@ async function updateTransactionsTable() {
     console.log('Transactions table update completed successfully');
   } catch (error) {
     console.error('Error updating transactions table:', error);
-  } finally {
-    process.exit();
+    throw error;
   }
 }
 
-updateTransactionsTable();
+if (require.main === module) {
+  updateTransactionsTable().then(() => process.exit(0)).catch(() => process.exit(1));
+}
+
+module.exports = updateTransactionsTable;
