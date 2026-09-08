@@ -1,5 +1,5 @@
 -- Create fund_centre_master table with all latest columns
-CREATE TABLE IF NOT EXISTS `itms`.`fund_centre_master` (
+CREATE TABLE IF NOT EXISTS `fund_centre_master` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(255) NOT NULL,
   `city` VARCHAR(100) NULL,
