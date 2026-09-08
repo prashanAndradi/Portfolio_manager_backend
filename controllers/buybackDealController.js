@@ -1,6 +1,8 @@
 const BuybackDeal = require('../models/buybackDealModel');
 const { resolveRequestUserId } = require('../utils/requestUser');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
+const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
+const { checkApprovalLimit } = require('../services/approvalLimitService');
 const Gsec = require('../models/gsec');
 const db = require('../config/database');
 const { getSystemDay } = require('../models/systemDayModel');
@@ -411,7 +413,22 @@ const buybackDealController = {
 
       const result = await BuybackDeal.create(dealData);
       // Important: buyback-linked GSec leg 2 is created only after final authorization (status=Approved).
-      
+
+      // Checked against leg1 (the opening leg actually dealt by the front-office user).
+      let limitWarning = null;
+      try {
+        const check = await checkDealerLimitAndNotify({
+          userId: dealData.created_by,
+          productType: 'buyback',
+          dealNumber,
+          amount: dealData.leg1.faceValue,
+          currency: dealData.leg1.currency || 'LKR'
+        });
+        if (check.breached) limitWarning = { message: check.message, limit: check.limit, amount: check.amount };
+      } catch (limitErr) {
+        console.error('[buyback createDeal] Dealer limit check failed (non-fatal):', limitErr.message);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Buyback deal created successfully',
@@ -419,7 +436,8 @@ const buybackDealController = {
           id: result.insertId,
           deal_number: dealNumber,
           status: 'Pending_Verification'
-        }
+        },
+        limitWarning
       });
 
     } catch (error) {
@@ -551,7 +569,7 @@ const buybackDealController = {
       }
 
       const [currentDealRows] = await db.query(
-        'SELECT deal_status FROM buyback_deals WHERE id = ? LIMIT 1',
+        'SELECT deal_status, deal_number, leg1_face_value, leg1_adjusted_face_value FROM buyback_deals WHERE id = ? LIMIT 1',
         [id]
       );
       if (!currentDealRows.length) {
@@ -571,6 +589,32 @@ const buybackDealController = {
           success: false,
           error: `Access denied: ${requiredRoles.join(' or ')} role required at this stage.`
         });
+      }
+
+      // An authorizer needs enough of their OWN configured limit to advance a
+      // deal (rejecting never needs it - only "proceeding" does).
+      if (status !== 'Rejected') {
+        const dealAmount = Number(
+          currentDealRows[0].leg1_adjusted_face_value ?? currentDealRows[0].leg1_face_value
+        ) || 0;
+        const limitCheck = await checkApprovalLimit({
+          actor,
+          requiredRoles,
+          dealAmount,
+          dealNumber: currentDealRows[0].deal_number,
+          productType: 'buyback',
+          stageKey: currentStatus
+        });
+        if (!limitCheck.ok) {
+          return res.status(403).json({
+            success: false,
+            limitExceeded: true,
+            error: limitCheck.message,
+            yourLimit: limitCheck.yourLimit,
+            dealAmount: limitCheck.dealAmount,
+            eligibleApprovers: limitCheck.eligibleApprovers
+          });
+        }
       }
       const userId = actor.id;
 
