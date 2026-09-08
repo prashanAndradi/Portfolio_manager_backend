@@ -347,6 +347,98 @@ This is an automated security notification from the Portfolio Management System.
       // Don't throw error for notifications - this is non-critical
     }
   }
+
+  async sendLimitBreachEmail(toEmail, details = {}, options = {}) {
+    if (!this.isConfigured) {
+      console.warn('Email service not configured - skipping limit breach notification');
+      return;
+    }
+
+    const {
+      dealerUsername = '',
+      dealNumber = '',
+      productType = '',
+      amount = '',
+      limit = '',
+      limitType = 'per-deal'
+    } = details;
+
+    const {
+      fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER,
+      subject = `Dealer Limit Exceeded - ${dealNumber || productType || 'Deal'}`
+    } = options;
+
+    const htmlContent = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Dealer Limit Exceeded</title>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f4; }
+            .container { background-color: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            .header { text-align: center; margin-bottom: 30px; }
+            .logo { font-size: 24px; font-weight: bold; color: #2c3e50; margin-bottom: 10px; }
+            .warning { background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .details { margin: 20px 0; }
+            .details td { padding: 4px 8px; }
+            .footer { font-size: 14px; color: #666; text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <div class="logo">Portfolio Management System</div>
+                <h2>Dealer Limit Exceeded</h2>
+            </div>
+            <div class="warning">
+                <strong>&#9888; This deal exceeded the entering dealer's ${limitType} limit.</strong><br>
+                The deal was still saved and is proceeding through the normal approval workflow.
+            </div>
+            <table class="details">
+                <tr><td><strong>Dealer:</strong></td><td>${dealerUsername}</td></tr>
+                <tr><td><strong>Deal Number:</strong></td><td>${dealNumber}</td></tr>
+                <tr><td><strong>Product:</strong></td><td>${productType}</td></tr>
+                <tr><td><strong>Amount:</strong></td><td>${amount}</td></tr>
+                <tr><td><strong>Limit:</strong></td><td>${limit}</td></tr>
+            </table>
+            <div class="footer">
+                <p>This is an automated notification from the Portfolio Management System.</p>
+            </div>
+        </div>
+    </body>
+    </html>`;
+
+    const textContent = `
+Portfolio Management System - Dealer Limit Exceeded
+
+This deal exceeded the entering dealer's ${limitType} limit. The deal was still saved and is proceeding through the normal approval workflow.
+
+Dealer: ${dealerUsername}
+Deal Number: ${dealNumber}
+Product: ${productType}
+Amount: ${amount}
+Limit: ${limit}
+
+This is an automated notification from the Portfolio Management System.
+    `.trim();
+
+    try {
+      const result = await this.transporter.sendMail({
+        from: fromEmail,
+        to: toEmail,
+        subject,
+        text: textContent,
+        html: htmlContent,
+      });
+      console.log('Dealer limit breach email sent successfully:', result.messageId);
+      return result;
+    } catch (error) {
+      console.error('Failed to send dealer limit breach email:', error);
+      // Don't throw - a failed notification must never block the deal save.
+    }
+  }
 }
 
 // Create and export singleton instance
