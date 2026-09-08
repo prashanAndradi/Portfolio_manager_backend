@@ -3,7 +3,9 @@ const Tbill = require('../models/tbillModel');
 const tbillPricing = require('../services/tbillPricingService');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
 const { resolveRequestUserId } = require('../utils/requestUser');
-const { actorCanActAtStage } = require('../utils/workflowStageAuth');
+const { actorCanActAtStage, requiredRolesForStage } = require('../utils/workflowStageAuth');
+const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
+const { checkApprovalLimit } = require('../services/approvalLimitService');
 
 function normalizeTransactionType(body) {
   return String(body.transactionType || body.transaction_type || 'Buy');
@@ -144,6 +146,22 @@ exports.create = async (req, res) => {
 
       await connection.commit();
 
+      let limitWarning = null;
+      try {
+        const dealerId = body.userId || resolveRequestUserId(req);
+        const totalAmount = created.reduce((sum, c) => sum + (Number(c.amountToSell) || 0), 0);
+        const check = await checkDealerLimitAndNotify({
+          userId: dealerId,
+          productType: 'tbill',
+          dealNumber: firstResult?.dealNumber || null,
+          amount: totalAmount,
+          currency: body.currency || 'LKR'
+        });
+        if (check.breached) limitWarning = { message: check.message, limit: check.limit, amount: check.amount };
+      } catch (limitErr) {
+        console.error('[tbill create] Dealer limit check failed (non-fatal):', limitErr.message);
+      }
+
       return res.status(201).json({
         success: true,
         message: `Created ${created.length} T-Bill sell transaction(s)`,
@@ -152,7 +170,8 @@ exports.create = async (req, res) => {
           deal_number: firstResult?.dealNumber,
           dealNumber: firstResult?.dealNumber,
           legs: created
-        }
+        },
+        limitWarning
       });
     }
 
@@ -181,10 +200,26 @@ exports.create = async (req, res) => {
     const { insertId, dealNumber } = await Tbill.createWithConnection(priced.payload, connection);
     await connection.commit();
 
+    let limitWarning = null;
+    try {
+      const dealerId = body.userId || resolveRequestUserId(req);
+      const check = await checkDealerLimitAndNotify({
+        userId: dealerId,
+        productType: 'tbill',
+        dealNumber,
+        amount: parseFloat(faceValue) || 0,
+        currency: body.currency || 'LKR'
+      });
+      if (check.breached) limitWarning = { message: check.message, limit: check.limit, amount: check.amount };
+    } catch (limitErr) {
+      console.error('[tbill create] Dealer limit check failed (non-fatal):', limitErr.message);
+    }
+
     return res.status(201).json({
       success: true,
       message: 'T-Bill deal saved',
-      data: { id: insertId, deal_number: dealNumber, dealNumber }
+      data: { id: insertId, deal_number: dealNumber, dealNumber },
+      limitWarning
     });
   } catch (err) {
     try {
@@ -263,6 +298,29 @@ exports.updateStatus = async (req, res) => {
         success: false,
         message: `Access denied: role required for the ${currentLevel} stage.`
       });
+    }
+
+    // An authorizer needs enough of their OWN configured limit to advance a
+    // deal (rejecting never needs it - only "proceeding" does).
+    if (status === 'approved') {
+      const limitCheck = await checkApprovalLimit({
+        actor,
+        requiredRoles: requiredRolesForStage(currentLevel),
+        dealAmount: Number(existing.face_value) || 0,
+        dealNumber: existing.deal_number,
+        productType: 'tbill',
+        stageKey: currentLevel
+      });
+      if (!limitCheck.ok) {
+        return res.status(403).json({
+          success: false,
+          limitExceeded: true,
+          message: limitCheck.message,
+          yourLimit: limitCheck.yourLimit,
+          dealAmount: limitCheck.dealAmount,
+          eligibleApprovers: limitCheck.eligibleApprovers
+        });
+      }
     }
 
     const updateData = {
