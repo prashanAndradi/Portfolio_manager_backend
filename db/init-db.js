@@ -21,13 +21,15 @@ async function initializeDatabase() {
 
     console.log('Connected to MySQL server...');
 
-    // Check if database exists, create if it doesn't
+    // Check if database exists, create if it doesn't. Backtick-quote the
+    // name - unquoted, a name containing a hyphen is a SQL syntax error.
+    const quotedDbName = `\`${String(process.env.DB_NAME).replace(/`/g, '``')}\``;
     console.log(`Checking if database '${process.env.DB_NAME}' exists...`);
-    await connection.query(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME};`);
+    await connection.query(`CREATE DATABASE IF NOT EXISTS ${quotedDbName};`);
     console.log(`Database '${process.env.DB_NAME}' ensured.`);
 
     // Use the database
-    await connection.query(`USE ${process.env.DB_NAME};`);
+    await connection.query(`USE ${quotedDbName};`);
     console.log(`Now using database '${process.env.DB_NAME}'.`);
 
     // Read SQL file
