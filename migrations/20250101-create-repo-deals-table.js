@@ -36,69 +36,7 @@ const createRepoDealsTable = async () => {
 
     await db.query(sql);
     console.log('✅ repo_deals table created successfully');
-    
-    // Add some sample data for testing
-    const sampleData = [
-      {
-                 deal_type: 'Repo',
-         counterparty_id: 1,
-         trade_date: '2025-01-15',
-        value_date: '2025-01-16',
-        maturity_date: '2025-02-15',
-        principal_amount: 1000000.00,
-        interest_amount: 12328.77,
-        rate: 6.50,
-        maturity_amount: 1012328.77,
-        tenor: 30,
-        calculation_day_basis: 365,
-        isin_number: 'IN1234567890',
-        issue_date: '15/01/2025',
-        haircut: 2.50,
-        face_value: 1000000.00,
-        status: 'Active',
-        created_by: 1
-      },
-      {
-                 deal_type: 'Reverse Repo',
-         counterparty_id: 1,
-         trade_date: '2025-01-20',
-        value_date: '2025-01-21',
-        maturity_date: '2025-03-20',
-        principal_amount: 500000.00,
-        interest_amount: 16438.36,
-        rate: 7.25,
-        maturity_amount: 516438.36,
-        tenor: 58,
-        calculation_day_basis: 365,
-        isin_number: 'IN0987654321',
-        issue_date: '20/01/2025',
-        haircut: 1.75,
-        face_value: 500000.00,
-        status: 'Active',
-        created_by: 1
-      }
-    ];
 
-    for (const deal of sampleData) {
-      const insertSql = `
-                 INSERT INTO repo_deals (
-           deal_type, counterparty_id, trade_date, value_date, maturity_date,
-           principal_amount, interest_amount, rate, maturity_amount, tenor,
-           calculation_day_basis, isin_number, issue_date, haircut, face_value,
-           status, created_by
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
-      
-             await db.query(insertSql, [
-         deal.deal_type, deal.counterparty_id, deal.trade_date, deal.value_date, deal.maturity_date,
-         deal.principal_amount, deal.interest_amount, deal.rate, deal.maturity_amount, deal.tenor,
-         deal.calculation_day_basis, deal.isin_number, deal.issue_date, deal.haircut, deal.face_value,
-         deal.status, deal.created_by
-       ]);
-    }
-    
-    console.log('✅ Sample repo deals data inserted successfully');
-    
   } catch (error) {
     console.error('❌ Error creating repo_deals table:', error);
     throw error;
