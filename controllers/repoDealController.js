@@ -3,6 +3,8 @@ const { resolveRepoDealNumber } = RepoDeal;
 const holidayValidationService = require('../services/holidayValidationService');
 const { resolveRequestUserId } = require('../utils/requestUser');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
+const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
+const { checkApprovalLimit } = require('../services/approvalLimitService');
 
 const parseCounterpartyId = (value) => {
   if (value === undefined || value === null || value === '') return null;
@@ -274,10 +276,25 @@ const repoDealController = {
       // Create the repo deal
       const newDeal = await RepoDeal.create(dealData);
 
+      let limitWarning = null;
+      try {
+        const check = await checkDealerLimitAndNotify({
+          userId: dealData.createdBy,
+          productType: dealData.dealType === 'Reverse Repo' ? 'reverse_repo' : 'repo',
+          dealNumber: newDeal?.deal_number || newDeal?.dealNumber || dealData.dealNumber || null,
+          amount: dealData.principalAmount,
+          currency: 'LKR'
+        });
+        if (check.breached) limitWarning = { message: check.message, limit: check.limit, amount: check.amount };
+      } catch (limitErr) {
+        console.error('[repo create] Dealer limit check failed (non-fatal):', limitErr.message);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Repo deal created successfully',
-        data: newDeal
+        data: newDeal,
+        limitWarning
       });
 
     } catch (error) {
@@ -603,6 +620,29 @@ const repoDealController = {
           success: false,
           message: `Access denied: ${requiredRole} required for ${currentLevel}`
         });
+      }
+
+      // An authorizer needs enough of their OWN configured limit to advance a
+      // deal (rejecting never needs it - only "proceeding" does).
+      if (action === 'approved') {
+        const limitCheck = await checkApprovalLimit({
+          actor,
+          requiredRoles: requiredRole ? [requiredRole] : [],
+          dealAmount: Number(existingDeal.principal_amount) || 0,
+          dealNumber: existingDeal.deal_number,
+          productType: existingDeal.deal_type === 'Reverse Repo' ? 'reverse_repo' : 'repo',
+          stageKey: currentLevel
+        });
+        if (!limitCheck.ok) {
+          return res.status(403).json({
+            success: false,
+            limitExceeded: true,
+            message: limitCheck.message,
+            yourLimit: limitCheck.yourLimit,
+            dealAmount: limitCheck.dealAmount,
+            eligibleApprovers: limitCheck.eligibleApprovers
+          });
+        }
       }
 
       // Only allow workflow changes when still in workflow (pending)
