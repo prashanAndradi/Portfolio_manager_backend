@@ -50,4 +50,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run };
+module.exports = run;
