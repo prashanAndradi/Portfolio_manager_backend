@@ -35,15 +35,25 @@ async function run() {
     'SELECT id, account_code FROM chart_of_accounts WHERE id IS NULL'
   );
   if (check.length) {
-    console.error('Still have NULL ids:', check);
-    process.exit(1);
+    throw new Error('Still have NULL ids: ' + JSON.stringify(check));
   }
   console.log('Done. All chart_of_accounts rows now have non-null id.');
 }
 
-run()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
+// Unlike every other migration in this repo, this file used to call run()
+// and process.exit() UNCONDITIONALLY at module load time, with no
+// `require.main === module` guard. Since process.exit() kills the entire
+// Node process regardless of what required the module, the instant the
+// migration runner `require()`d this file (not "ran" it - just loaded it),
+// the whole migration run was silently killed mid-chain with exit code 0,
+// abandoning every migration after this one with no error and no summary.
+if (require.main === module) {
+  run()
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}
+
+module.exports = run;
