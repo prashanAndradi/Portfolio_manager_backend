@@ -48,12 +48,16 @@ async function createCorporateCounterpartyTable() {
 }
 
 // Run the migration
-createCorporateCounterpartyTable()
-  .then(() => {
-    console.log('Migration completed successfully');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('Migration failed:', error);
-    process.exit(1);
-  });
+if (require.main === module) {
+  createCorporateCounterpartyTable()
+    .then(() => {
+      console.log('Migration completed successfully');
+      process.exit(0);
+    })
+    .catch((error) => {
+      console.error('Migration failed:', error);
+      process.exit(1);
+    });
+}
+
+module.exports = createCorporateCounterpartyTable;
