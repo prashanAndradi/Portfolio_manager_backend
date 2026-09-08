@@ -41,6 +41,8 @@ router.use('/counterparty-corporate', require('./counterpartyCorporateRoutes'));
 router.use('/isin-master', require('./isinMasterRoutes'));
 router.use('/limit-setup', require('./limitSetupRoutes'));
 router.use('/limit-status', require('./limitStatusRoutes'));
+router.use('/dealer-limits', require('./dealerLimitRoutes'));
+router.use('/notifications', require('./notificationRoutes'));
 router.use('/money-market-deals', require('./moneyMarketDeals'));
 router.use('/repo-deals', require('./repoRoutes'));
 router.use('/securities', require('./securities'));
