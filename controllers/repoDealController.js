@@ -5,6 +5,10 @@ const { resolveRequestUserId } = require('../utils/requestUser');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
 const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
 const { checkApprovalLimit } = require('../services/approvalLimitService');
+const {
+  checkCounterpartyLimitAndNotify,
+  parseCounterpartyCode
+} = require('../services/counterpartyLimitCheckService');
 
 const parseCounterpartyId = (value) => {
   if (value === undefined || value === null || value === '') return null;
@@ -290,11 +294,41 @@ const repoDealController = {
         console.error('[repo create] Dealer limit check failed (non-fatal):', limitErr.message);
       }
 
+      // Counterparty exposure check - same best-effort contract as above.
+      let counterpartyLimitWarning = null;
+      try {
+        // dealData.counterparty holds the already-parsed integer id, which
+        // carries no type. Use the raw prefix-coded value from the request
+        // (e.g. 'c3') so the counterparty type is preserved.
+        const parsed = parseCounterpartyCode(counterparty);
+        if (parsed) {
+          const cpCheck = await checkCounterpartyLimitAndNotify({
+            ...parsed,
+            productType: dealData.dealType === 'Reverse Repo' ? 'reverse_repo' : 'repo',
+            dealNumber: newDeal?.deal_number || newDeal?.dealNumber || dealData.dealNumber || null,
+            amount: dealData.principalAmount,
+            currency: 'LKR',
+            userId: dealData.createdBy
+          });
+          if (cpCheck.breached) {
+            counterpartyLimitWarning = {
+              message: cpCheck.message,
+              limit: cpCheck.limit,
+              exposure: cpCheck.exposure,
+              limitType: cpCheck.limitType
+            };
+          }
+        }
+      } catch (cpErr) {
+        console.error('[repo create] Counterparty limit check failed (non-fatal):', cpErr.message);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Repo deal created successfully',
         data: newDeal,
-        limitWarning
+        limitWarning,
+        counterpartyLimitWarning
       });
 
     } catch (error) {
