@@ -6,6 +6,10 @@ const { resolveRequestUserId } = require('../utils/requestUser');
 const { actorCanActAtStage, requiredRolesForStage } = require('../utils/workflowStageAuth');
 const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
 const { checkApprovalLimit } = require('../services/approvalLimitService');
+const {
+  checkCounterpartyLimitAndNotify,
+  parseCounterpartyCode
+} = require('../services/counterpartyLimitCheckService');
 
 function normalizeTransactionType(body) {
   return String(body.transactionType || body.transaction_type || 'Buy');
@@ -162,6 +166,33 @@ exports.create = async (req, res) => {
         console.error('[tbill create] Dealer limit check failed (non-fatal):', limitErr.message);
       }
 
+      // Counterparty exposure check - same best-effort contract as above.
+      let counterpartyLimitWarning = null;
+      try {
+        const parsed = parseCounterpartyCode(body.counterparty);
+        if (parsed) {
+          const totalAmount = created.reduce((sum, c) => sum + (Number(c.amountToSell) || 0), 0);
+          const cpCheck = await checkCounterpartyLimitAndNotify({
+            ...parsed,
+            productType: 'tbill',
+            dealNumber: firstResult?.dealNumber || null,
+            amount: totalAmount,
+            currency: body.currency || 'LKR',
+            userId: body.userId || resolveRequestUserId(req)
+          });
+          if (cpCheck.breached) {
+            counterpartyLimitWarning = {
+              message: cpCheck.message,
+              limit: cpCheck.limit,
+              exposure: cpCheck.exposure,
+              limitType: cpCheck.limitType
+            };
+          }
+        }
+      } catch (cpErr) {
+        console.error('[tbill create] Counterparty limit check failed (non-fatal):', cpErr.message);
+      }
+
       return res.status(201).json({
         success: true,
         message: `Created ${created.length} T-Bill sell transaction(s)`,
@@ -171,7 +202,8 @@ exports.create = async (req, res) => {
           dealNumber: firstResult?.dealNumber,
           legs: created
         },
-        limitWarning
+        limitWarning,
+        counterpartyLimitWarning
       });
     }
 

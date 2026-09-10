@@ -10,6 +10,10 @@ const { resolveRequestUserId } = require('../utils/requestUser');
 const { actorCanActAtStage, requiredRolesForStage } = require('../utils/workflowStageAuth');
 const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
 const { checkApprovalLimit } = require('../services/approvalLimitService');
+const {
+  checkCounterpartyLimitAndNotify,
+  parseCounterpartyCode
+} = require('../services/counterpartyLimitCheckService');
 
 module.exports = {
   // Save both legs of a G-Sec buyback as a single row in buyback_gsec
@@ -466,7 +470,36 @@ module.exports = {
         console.error('[saveGsec] Dealer limit check failed (non-fatal):', limitErr.message);
       }
 
-      res.json({ success: true, message: 'Gsec transaction saved', id: result.insertId, limitWarning });
+      // Counterparty exposure check - same best-effort contract as above.
+      let counterpartyLimitWarning = null;
+      try {
+        // The payload field is `counterparty` (prefix-coded, e.g. 'c3'); the
+        // model writes it into the counterparty_id column, so read the
+        // payload name here, not the column name.
+        const parsed = parseCounterpartyCode(formData.counterparty || req.body.counterparty);
+        if (parsed) {
+          const cpCheck = await checkCounterpartyLimitAndNotify({
+            ...parsed,
+            productType: 'gsec',
+            dealNumber: req.body.dealNumber || req.body.deal_number || null,
+            amount: parseFloat(req.body.faceValue) || 0,
+            currency: req.body.currency || 'LKR',
+            userId: formData.created_by
+          });
+          if (cpCheck.breached) {
+            counterpartyLimitWarning = {
+              message: cpCheck.message,
+              limit: cpCheck.limit,
+              exposure: cpCheck.exposure,
+              limitType: cpCheck.limitType
+            };
+          }
+        }
+      } catch (cpErr) {
+        console.error('[saveGsec] Counterparty limit check failed (non-fatal):', cpErr.message);
+      }
+
+      res.json({ success: true, message: 'Gsec transaction saved', id: result.insertId, limitWarning, counterpartyLimitWarning });
     } catch (err) {
       // Clear the timeout
       clearTimeout(timeout);

@@ -3,6 +3,10 @@ const { resolveRequestUserId } = require('../utils/requestUser');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
 const { checkDealerLimitAndNotify } = require('../services/dealerLimitCheckService');
 const { checkApprovalLimit } = require('../services/approvalLimitService');
+const {
+  checkCounterpartyLimitAndNotify,
+  parseCounterpartyCode
+} = require('../services/counterpartyLimitCheckService');
 const Gsec = require('../models/gsec');
 const db = require('../config/database');
 const { getSystemDay } = require('../models/systemDayModel');
@@ -429,6 +433,32 @@ const buybackDealController = {
         console.error('[buyback createDeal] Dealer limit check failed (non-fatal):', limitErr.message);
       }
 
+      // Counterparty exposure check, also against leg1.
+      let counterpartyLimitWarning = null;
+      try {
+        const parsed = parseCounterpartyCode(dealData.leg1.counterparty);
+        if (parsed) {
+          const cpCheck = await checkCounterpartyLimitAndNotify({
+            ...parsed,
+            productType: 'buyback',
+            dealNumber,
+            amount: dealData.leg1.faceValue,
+            currency: dealData.leg1.currency || 'LKR',
+            userId: dealData.created_by
+          });
+          if (cpCheck.breached) {
+            counterpartyLimitWarning = {
+              message: cpCheck.message,
+              limit: cpCheck.limit,
+              exposure: cpCheck.exposure,
+              limitType: cpCheck.limitType
+            };
+          }
+        }
+      } catch (cpErr) {
+        console.error('[buyback createDeal] Counterparty limit check failed (non-fatal):', cpErr.message);
+      }
+
       res.status(201).json({
         success: true,
         message: 'Buyback deal created successfully',
@@ -437,7 +467,8 @@ const buybackDealController = {
           deal_number: dealNumber,
           status: 'Pending_Verification'
         },
-        limitWarning
+        limitWarning,
+        counterpartyLimitWarning
       });
 
     } catch (error) {
