@@ -84,7 +84,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 exports.login = async (req, res) => {
   try {
-    console.log('LOGIN ATTEMPT:', req.body);
+    // Never log req.body here - it contains the plain-text password, which
+    // would then sit in the PM2 log files in clear text.
+    console.log('LOGIN ATTEMPT for user:', req.body?.username);
     const { username, password } = req.body;
     
     // Static admin check
