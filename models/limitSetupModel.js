@@ -44,7 +44,106 @@ const LimitSetup = {
     const [result] = await db.query(sql, values);
     return result;
   },
-  
+
+  // --- Middle Office approval workflow -------------------------------------
+  // A middle_office_user's submission is staged in counterparty_limit_proposals
+  // rather than written straight to counterparty_limits. Officers/managers
+  // approve (which performs the real insert) or reject it.
+
+  proposeLimit: async ({ counterparty_id, counterparty_type, payload, proposed_by }) => {
+    const [result] = await db.query(
+      `INSERT INTO counterparty_limit_proposals
+         (counterparty_id, counterparty_type, payload, status, proposed_by, proposed_at)
+       VALUES (?, ?, ?, 'pending', ?, NOW())`,
+      [counterparty_id, counterparty_type, JSON.stringify(payload), proposed_by]
+    );
+    return result;
+  },
+
+  getPendingProposals: async () => {
+    const [rows] = await db.query(`
+      SELECT p.id, p.counterparty_id, p.counterparty_type, p.payload,
+             p.proposed_by, p.proposed_at, u.username AS proposed_by_name
+      FROM counterparty_limit_proposals p
+      LEFT JOIN users u ON u.id = p.proposed_by
+      WHERE p.status = 'pending'
+      ORDER BY p.proposed_at DESC
+    `);
+    // mysql2 returns JSON columns already parsed on some driver versions and
+    // as a string on others - normalise so callers always get an object.
+    return rows.map((r) => ({
+      ...r,
+      payload: typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload
+    }));
+  },
+
+  // Full request history for the blotter. `proposedBy` scopes the list to one
+  // submitter (a plain middle_office_user only sees their own requests).
+  getProposals: async ({ status, proposedBy } = {}) => {
+    const where = [];
+    const params = [];
+    if (status && status !== 'all') {
+      where.push('p.status = ?');
+      params.push(status);
+    }
+    if (proposedBy) {
+      where.push('p.proposed_by = ?');
+      params.push(proposedBy);
+    }
+    const [rows] = await db.query(`
+      SELECT p.id, p.counterparty_id, p.counterparty_type, p.payload, p.status,
+             p.proposed_by, p.proposed_at, p.approved_by, p.approved_at,
+             p.rejected_by, p.rejected_at, p.rejection_reason, p.created_limit_id,
+             pu.username AS proposed_by_name,
+             au.username AS approved_by_name,
+             ru.username AS rejected_by_name
+      FROM counterparty_limit_proposals p
+      LEFT JOIN users pu ON pu.id = p.proposed_by
+      LEFT JOIN users au ON au.id = p.approved_by
+      LEFT JOIN users ru ON ru.id = p.rejected_by
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY p.proposed_at DESC, p.id DESC
+    `, params);
+    return rows.map((r) => ({
+      ...r,
+      payload: typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload
+    }));
+  },
+
+  getProposalById: async (id) => {
+    const [rows] = await db.query(
+      'SELECT * FROM counterparty_limit_proposals WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    return {
+      ...row,
+      payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload
+    };
+  },
+
+  // Guarded on status = 'pending' so two approvers racing can't both apply it.
+  markProposalApproved: async (id, approvedBy, createdLimitId) => {
+    const [result] = await db.query(
+      `UPDATE counterparty_limit_proposals
+       SET status = 'approved', approved_by = ?, approved_at = NOW(), created_limit_id = ?
+       WHERE id = ? AND status = 'pending'`,
+      [approvedBy, createdLimitId, id]
+    );
+    return result;
+  },
+
+  markProposalRejected: async (id, rejectedBy, reason) => {
+    const [result] = await db.query(
+      `UPDATE counterparty_limit_proposals
+       SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
+       WHERE id = ? AND status = 'pending'`,
+      [rejectedBy, reason || null, id]
+    );
+    return result;
+  },
+
   getLimitsByCounterparty: async (counterpartyId, counterpartyType, currency = 'LKR') => {
     const sql = `
       SELECT * FROM counterparty_limits 
