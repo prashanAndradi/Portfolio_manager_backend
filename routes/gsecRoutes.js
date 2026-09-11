@@ -47,7 +47,11 @@ router.get('/', async (req, res) => {
     } else if (approval_level) {
       transactions = await db.getTransactionsByApprovalLevel(approval_level);
     } else {
-      transactions = await db.getAllTransactions(); // fallback, or return []
+      // No filter given: return the most recent deals. The model has no
+      // fetch-all method (this used to call a non-existent
+      // db.getAllTransactions(), so every unfiltered request 500'd);
+      // getRecent() returns the latest 150 with counterparty names joined.
+      transactions = await db.getRecent();
     }
     res.json(transactions);
   } catch (err) {
