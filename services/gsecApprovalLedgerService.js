@@ -540,20 +540,23 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
   const amortAccount =
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_AMORTISATION_TRADING)) ||
     '358-101-130-416-44';
+  // These fallback GLs only apply if a mapping lookup fails. They must match
+  // account_mappings, or a failed lookup would silently post to a retired GL
+  // (updated for the 2026-09-11 GL mapping change).
   const couponIncomeAccount =
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_COUPON_INCOME)) ||
-    '467-101-190-476-44';
+    '358-101-130-404-44';
   const capitalGainLossAccount =
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_CAPITAL_GAIN_LOSS)) ||
     '358-101-130-398-44';
   const accruedIncomeAccount =
     options.accruedIncomeAccountOverride ||
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUAL_INCOME)) ||
-    '467-101-190-470-44';
+    '358-101-130-404-44';
   const accruedReceivableAccount =
     options.accruedReceivableAccountOverride ||
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUAL_ASSET)) ||
-    '131-101-290-218-44';
+    '131-101-350-116-44';
 
   const mainDescription = `${prefix}GSec Sale - Final Approval - ${transaction.deal_number}`;
   const mainDr = [

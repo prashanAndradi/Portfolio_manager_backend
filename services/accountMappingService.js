@@ -17,11 +17,11 @@ const MAPPING_KEYS = {
   // GSEC Accounts
   GSEC_ASSET_TBONDS: 'GSEC_ASSET_TBONDS',
   GSEC_DEFAULT_SETTLEMENT: 'GSEC_DEFAULT_SETTLEMENT',
-  GSEC_ACCRUAL_ASSET: 'GSEC_ACCRUAL_ASSET', // Debit: 131-101-290-218-44 — GSec Accrued Interest Receivable
-  GSEC_ACCRUAL_INCOME: 'GSEC_ACCRUAL_INCOME', // Credit: 467-101-190-470-44 — GSec Interest Income (Accrued)
-  GSEC_COUPON_INCOME: 'GSEC_COUPON_INCOME', // Credit: 467-101-190-476-44 — Coupon Interest Income TBond
+  GSEC_ACCRUAL_ASSET: 'GSEC_ACCRUAL_ASSET', // Debit: 131-101-350-116-44 — Interest Receivable TBonds Coupon - Trading (daily accrual)
+  GSEC_ACCRUAL_INCOME: 'GSEC_ACCRUAL_INCOME', // Credit: 358-101-130-404-44 — Interest Received Treasury Bonds Coupons - Trading (daily accrual)
+  GSEC_COUPON_INCOME: 'GSEC_COUPON_INCOME', // Credit: 358-101-130-404-44 — Interest Received Treasury Bonds Coupons - Trading (coupon settlement)
   GSEC_AMORTISATION_TRADING: 'GSEC_AMORTISATION_TRADING', // 358-101-130-416-44 — Amortised Discount Received/Premium Paid TBonds - Trading
-  GSEC_FINANCIAL_ASSETS_AMORTISED_COST: 'GSEC_FINANCIAL_ASSETS_AMORTISED_COST', // 131-101-170-044-44 — Financial Assets at amortised cost
+  GSEC_FINANCIAL_ASSETS_AMORTISED_COST: 'GSEC_FINANCIAL_ASSETS_AMORTISED_COST', // 131-101-350-134-44 — Amortised Discount Receivable/Premium Payable TBond - Trading (daily amortisation)
   GSEC_TRADING_ACCOUNT: 'GSEC_TRADING_ACCOUNT', // Treasury Bonds - Trading A/c (131-101-350-098-44)
   GSEC_ACCRUED_INTEREST_PAID: 'GSEC_ACCRUED_INTEREST_PAID', // Accrued Coupon Interest Paid at Purchase (131-101-350-128-44)
   GSEC_CAPITAL_GAIN_LOSS: 'GSEC_CAPITAL_GAIN_LOSS', // Capital Gain/Loss on Treasury Bond (358-101-130-398-44)
@@ -31,7 +31,7 @@ const MAPPING_KEYS = {
   // T-Bill Accounts
   TBILL_TRADING_ACCOUNT: 'TBILL_TRADING_ACCOUNT', // 131-101-350-104-44 — Treasury Bills - Trading A/c
   TBILL_ACCRUAL_ASSET: 'TBILL_ACCRUAL_ASSET', // 131-101-350-122-44 — Interest Receivable T-Bill - Trading
-  TBILL_ACCRUAL_INCOME: 'TBILL_ACCRUAL_INCOME', // 467-101-190-482-44 — Interest Accrual P&L T-Bill
+  TBILL_ACCRUAL_INCOME: 'TBILL_ACCRUAL_INCOME', // 358-101-130-410-44 — Interest Received on Treasury Bills - Trading (daily accrual)
   TBILL_INTEREST_RECEIVED: 'TBILL_INTEREST_RECEIVED', // 358-101-130-410-44 — Interest Received on Treasury Bills
   TBILL_CAPITAL_GAIN_LOSS: 'TBILL_CAPITAL_GAIN_LOSS', // 358-101-130-392-44 — Profit/Loss on Sales of Treasury Bills
   TBILL_DEFAULT_SETTLEMENT: 'TBILL_DEFAULT_SETTLEMENT', // 131-101-410-182-44 — Default bank settlement for T-Bill
@@ -63,9 +63,9 @@ const MAPPING_KEYS = {
   REPO_REVERSE_REPO_ASSET: 'REPO_REVERSE_REPO_ASSET',   // 131-101-410-206-44 Reverse Repo with Banks and Other Financial Institutes
   REPO_INTEREST_INCOME: 'REPO_INTEREST_INCOME',           // 467-101-190-440-44 Interest Received on R/Repo with Banks and Other Financial Institutes
   REVERSE_REPO_LIABILITY: 'REVERSE_REPO_LIABILITY',       // 249-101-330-308-44 Repo with Banks and Other Financial Institutes (principal borrowing CR, maturity, etc.)
-  REVERSE_REPO_INTEREST_PAYABLE: 'REVERSE_REPO_INTEREST_PAYABLE', // 249-101-330-780-44 Interest Payable Repo Borrowing (Reverse Repo daily interest accrual CR)
+  REVERSE_REPO_INTEREST_PAYABLE: 'REVERSE_REPO_INTEREST_PAYABLE', // 249-101-330-314-44 Interest Payable on Repo with Banks and Other Financial Institutes (Reverse Repo daily interest accrual CR)
   REVERSE_REPO_INTEREST_EXPENSE: 'REVERSE_REPO_INTEREST_EXPENSE', // 669-101-240-752-44 Interest Paid on Repo with Banks and Other Financial Institutes (daily accrual DR)
-  REVERSE_REPO_MATURITY_INTEREST_EXPENSE: 'REVERSE_REPO_MATURITY_INTEREST_EXPENSE', // 669-101-240-768-44 Interest Expense Repo Borrowing (interest expense recognised at maturity DR)
+  REVERSE_REPO_MATURITY_INTEREST_EXPENSE: 'REVERSE_REPO_MATURITY_INTEREST_EXPENSE', // 669-101-240-752-44 Interest Paid on Repo with Banks and Other Financial Institutes (maturity interest expense DR; shares the daily-accrual GL since the 2026-09-11 change)
 
   // General Accounts
   CASH_BANK_ASSET: 'CASH_BANK_ASSET',
