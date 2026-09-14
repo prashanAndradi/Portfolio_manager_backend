@@ -853,7 +853,8 @@ const Gsec = {
       const isinPh = modalIsins.length ? modalIsins.map(() => '?').join(',') : "'__none__'";
       const effectiveCutoff = asAtDate || new Date().toISOString().split('T')[0];
       let buybackSql = `
-        SELECT source_buy_deal_number, leg1_face_value, leg1_isin${hasSellDealAllocationsColumn ? ', sell_deal_allocations' : ''}
+        SELECT source_buy_deal_number, leg1_face_value, leg1_isin${hasSellDealAllocationsColumn ? ', sell_deal_allocations' : ''},
+               (leg2_value_date IS NOT NULL AND DATE(leg2_value_date) <= DATE(?)) AS leg2_settled
         FROM buyback_deals
         WHERE leg1_transaction_type = 'Sell'
         AND deal_status = 'Approved'
@@ -861,7 +862,7 @@ const Gsec = {
         AND (source_buy_deal_number IN (${placeholders}) OR (source_buy_deal_number IS NULL AND leg1_isin IN (${isinPh})))
         ORDER BY DATE(leg1_value_date) ASC, id ASC
       `;
-      const buybackParams = [effectiveCutoff, ...dealNumbers, ...modalIsins];
+      const buybackParams = [effectiveCutoff, effectiveCutoff, ...dealNumbers, ...modalIsins];
       
       const [buybackRows] = await db.query(buybackSql, buybackParams);
 
@@ -938,11 +939,16 @@ const Gsec = {
             allocModalFIFO(row.leg1_isin, overflow, key);
           }
         } else if (row.leg1_isin) {
+          // No source deal and no allocations (legacy buybacks entered before allocations
+          // existed): the sold lots are unknown, so the leg-1 face is spread FIFO over the
+          // ISIN's deals. Once leg 2 has settled the bond is back in the book, so stop
+          // deducting - otherwise the old sell floats onto whatever deals are held today.
+          if (Number(row.leg2_settled) === 1) return;
           allocModalFIFO(row.leg1_isin, amount, null);
         }
       });
     }
-    
+
     return rows.map(deal => {
       const originalFace = Number(deal.face_value) || 0;
       const soldAmount = Number(soldByDeal[deal.deal_number] || 0);
