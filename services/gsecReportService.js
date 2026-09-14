@@ -169,7 +169,7 @@ async function getGsecTransactionsReport({ asAtDate, portfolio, isin, valueDate,
     isin: row.isin,
     face_value: formatCurrency(row.face_value, 2),
     coupon_rate: formatPercentage(row.coupon_rate, 4),
-    coupon_interest: formatPrice(row.coupon_interest, 4),
+    coupon_interest: formatPrice(periodCouponOnFace(row.face_value, row.coupon_rate, row.coupon_interest, row.face_value), 4),
     clean_price: formatPrice(row.clean_price, 4),
     dirty_price: formatPrice(row.dirty_price, 4),
     yield: formatPercentage(row.yield, 4),
@@ -179,6 +179,18 @@ async function getGsecTransactionsReport({ asAtDate, portfolio, isin, valueDate,
   }));
 
   return { data, total: Number(count) || 0, totalPortfolioBalance: null, summary: [] };
+}
+
+// One coupon period's interest (semi-annual) on `face`, from the ISIN coupon rate.
+// gsec.coupon_interest is fixed at deal entry on the original face - and some rows
+// hold the annual figure - so it is only a fallback when the rate is unknown.
+function periodCouponOnFace(face, couponRate, storedCouponInterest, storedFace) {
+  const faceNum = Number(face) || 0;
+  const rate = Number(couponRate);
+  if (Number.isFinite(rate) && rate > 0) return (faceNum * rate) / 100 / 2;
+  const stored = Number(storedCouponInterest) || 0;
+  const base = Number(storedFace) || 0;
+  return base > 0 ? stored * (faceNum / base) : stored;
 }
 
 exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityDate, dateFrom, dateTo, page, pageSize, view }) => {
@@ -683,10 +695,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
     let cumulativeAccrual = 0;
     try {
       const effectiveFace = Number(row.effective_remaining_face ?? row.face_value) || 0;
-      const originalFace = Number(row.face_value) || 0;
-      const couponInterestFull = Number(row.coupon_interest) || 0;
-      const scale = originalFace > 0 ? effectiveFace / originalFace : 1;
-      const effectiveCouponInterest = couponInterestFull * scale;
+      const effectiveCouponInterest = periodCouponOnFace(effectiveFace, row.coupon_rate, row.coupon_interest, row.face_value);
 
       const accStart = startYmd;
       const accEnd = cappedEnd;
@@ -763,7 +772,8 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
       maturity_date: row.maturity_date,
       isin: row.isin,
       coupon_rate: formatPercentage(row.coupon_rate, 4),
-      coupon_interest: formatPrice(row.coupon_interest, 4),
+      // Coupon for the face still held (matches the Face Value column), not the stored entry-time figure
+      coupon_interest: formatPrice(periodCouponOnFace(row.effective_remaining_face ?? row.face_value, row.coupon_rate, row.coupon_interest, row.face_value), 4),
       clean_price: formatPrice(row.clean_price, 4),
       dirty_price: formatPrice(row.dirty_price, 4),
       // Amount = price * (remaining/displayed) face value / 100
