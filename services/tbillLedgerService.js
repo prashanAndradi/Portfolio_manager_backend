@@ -37,7 +37,10 @@ const ledgerController = require('../controllers/ledgerController');
 
 const DEFAULT_TBILL_TRADING_CODE = '131-101-350-104-44';
 const DEFAULT_TBILL_ACCRUAL_ASSET_CODE = '131-101-350-122-44';
-const DEFAULT_TBILL_ACCRUAL_INCOME_CODE = '467-101-190-482-44';
+// Was 467-101-190-482-44 (Interest Accrual P&L TBill). Moved to the Interest
+// Received account in the 2026-09-11 GL mapping change, so it deliberately
+// matches DEFAULT_TBILL_INTEREST_RECEIVED_CODE below.
+const DEFAULT_TBILL_ACCRUAL_INCOME_CODE = '358-101-130-410-44';
 const DEFAULT_TBILL_INTEREST_RECEIVED_CODE = '358-101-130-410-44';
 const DEFAULT_TBILL_CAPITAL_GAIN_LOSS_CODE = '358-101-130-392-44';
 const DEFAULT_TBILL_BANK_CODE = '131-101-410-182-44';
