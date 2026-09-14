@@ -205,11 +205,11 @@ router.get('/keys/all', async (req, res) => {
       descriptions: {
         GSEC_ASSET_TBONDS: 'GSEC Asset - Treasury Bonds',
         GSEC_DEFAULT_SETTLEMENT: 'GSEC Default Settlement Account',
-        GSEC_ACCRUAL_ASSET: 'GSec Accrued Interest Receivable (131-101-290-218-44)',
-        GSEC_ACCRUAL_INCOME: 'GSec Interest Income (Accrued) (467-101-190-470-44)',
-        GSEC_COUPON_INCOME: 'Coupon Interest Income TBond (467-101-190-476-44)',
+        GSEC_ACCRUAL_ASSET: 'Interest Receivable TBonds Coupon - Trading (daily accrual) (131-101-350-116-44)',
+        GSEC_ACCRUAL_INCOME: 'Interest Received Treasury Bonds Coupons - Trading (daily accrual) (358-101-130-404-44)',
+        GSEC_COUPON_INCOME: 'Interest Received Treasury Bonds Coupons - Trading (coupon settlement) (358-101-130-404-44)',
         GSEC_AMORTISATION_TRADING: 'Amortised Discount Received/Premium Paid TBonds - Trading (358-101-130-416-44)',
-        GSEC_FINANCIAL_ASSETS_AMORTISED_COST: 'Financial Assets at amortised cost (131-101-170-044-44)',
+        GSEC_FINANCIAL_ASSETS_AMORTISED_COST: 'Amortised Discount Receivable/Premium Payable TBond - Trading (daily amortisation) (131-101-350-134-44)',
         FD_ACCRUAL_ASSET: 'Fixed Deposit Daily Accrual Asset',
         FD_ACCRUAL_INCOME: 'Fixed Deposit Daily Accrual Income',
         MM_LENDING_CONTROL: 'Money Market Lending Control Account',
@@ -221,7 +221,7 @@ router.get('/keys/all', async (req, res) => {
         REPO_REVERSE_REPO_ASSET: 'Reverse Repo with Banks and Other Financial Institutes (131-101-410-206-44)',
         REPO_INTEREST_INCOME: 'Interest Received on R/Repo with Banks and Other Financial Institutes (467-101-190-440-44)',
         REVERSE_REPO_LIABILITY: 'Repo with Banks and Other Financial Institutes (249-101-330-308-44)',
-        REVERSE_REPO_INTEREST_PAYABLE: 'Interest Payable Repo Borrowing (249-101-330-780-44) — Reverse Repo daily accrual credit',
+        REVERSE_REPO_INTEREST_PAYABLE: 'Interest Payable on Repo with Banks and Other Financial Institutes (daily accrual) (249-101-330-314-44)',
         REVERSE_REPO_INTEREST_EXPENSE: 'Interest Paid on Repo with Banks and Other Financial Institutes (669-101-240-752-44)'
       }
     });
