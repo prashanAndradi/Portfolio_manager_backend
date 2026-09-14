@@ -22,13 +22,12 @@
  *     CR  Interest Receivable T-Bill - Trading = proportional accrued receivable reversed
  *     CR/DR Profit/Loss on Sales of T-Bills    = plug (gain CR / loss DR)
  *
- *   Maturity (redemption):
+ *   Maturity (redemption) — Finance entry only (no P&L plug, no income reclass):
  *     DR  Bank (settlement)                    = remaining face value (par)
  *     CR  Treasury Bills - Trading A/c         = remaining cost
- *     CR  Interest Receivable T-Bill - Trading = remaining accrued receivable
- *     plus a reclassification entry:
- *     DR  Interest Accrual P&L T-Bill          = accumulated accrual income
- *     CR  Interest Received on Treasury Bills  = accumulated accrual income
+ *     CR  Interest Receivable T-Bill - Trading = face − remaining cost
+ *         (clears the accrued receivable; any tiny rounding vs accrued_interest_to_date
+ *          is absorbed here so the three lines always balance)
  */
 
 const db = require('../config/database');
@@ -357,8 +356,10 @@ async function hasTbillMaturityLedger(dealNumber) {
 }
 
 /**
- * Post the maturity redemption journal (+ accrual income reclassification) for a T-Bill
- * Buy deal and flag it matured. Idempotent: skips if a redemption entry already exists.
+ * Post the maturity redemption journal for a T-Bill Buy deal and flag it matured.
+ * Finance mapping (held to maturity): only Bank / Trading / Interest Receivable —
+ * no TBILL_CAPITAL_GAIN_LOSS plug and no Accrual-Income ↔ Interest-Received reclass.
+ * Idempotent: skips if a redemption entry already exists.
  * @param {object} buyRow - tbill Buy row
  * @param {object} [options]
  * @param {boolean} [options.markMatured=true]
@@ -382,17 +383,13 @@ async function postTbillMaturityLedger(buyRow, options = {}) {
 
   const buyFace = Number(buyRow.face_value || 0);
   const buySettlement = Number(buyRow.settlement_amount || 0);
-  const accruedReceivable = Math.max(0, truncate8(Number(buyRow.accrued_interest_to_date || 0)));
-  const costBasisRemaining = buyFace > 0 ? truncate8((buySettlement / buyFace) * redeemFace) : 0;
-
-  // Small rounding residual from truncated daily accruals; absorbed as a gain/loss plug.
-  const residual = truncate8(redeemFace - costBasisRemaining - accruedReceivable);
+  let costBasisRemaining = buyFace > 0 ? truncate8((buySettlement / buyFace) * redeemFace) : 0;
+  // Cap cost at face so the three-line entry can always balance without a P&L plug.
+  if (costBasisRemaining > redeemFace) costBasisRemaining = redeemFace;
+  const receivableClear = truncate8(redeemFace - costBasisRemaining);
 
   const tradingAccount = await getTradingAccountCode();
   const accrualAssetAccount = await getAccrualAssetAccountCode();
-  const accrualIncomeAccount = await getAccrualIncomeAccountCode();
-  const interestReceivedAccount = await getInterestReceivedAccountCode();
-  const gainLossAccount = await getCapitalGainLossAccountCode();
   const bankAccount = await resolveTbillBankCode(buyRow.settlement_mode);
 
   const maturityDate = toYmd(buyRow.maturity_date) || new Date().toISOString().slice(0, 10);
@@ -403,21 +400,8 @@ async function postTbillMaturityLedger(buyRow, options = {}) {
   if (costBasisRemaining > 0) {
     crLines.push({ account_code: tradingAccount, amount: costBasisRemaining, description: redemptionDescription });
   }
-  if (accruedReceivable > 0) {
-    crLines.push({ account_code: accrualAssetAccount, amount: accruedReceivable, description: redemptionDescription });
-  }
-  if (residual > 0.000001) {
-    crLines.push({
-      account_code: gainLossAccount,
-      amount: residual,
-      description: `${redemptionDescription} (rounding)`
-    });
-  } else if (residual < -0.000001) {
-    drLines.push({
-      account_code: gainLossAccount,
-      amount: Math.abs(residual),
-      description: `${redemptionDescription} (rounding)`
-    });
+  if (receivableClear > 0) {
+    crLines.push({ account_code: accrualAssetAccount, amount: receivableClear, description: redemptionDescription });
   }
 
   const redemptionResult = await ledgerController.postMultiLineLedgerEntry({
@@ -429,21 +413,6 @@ async function postTbillMaturityLedger(buyRow, options = {}) {
   });
   if (!redemptionResult.success) {
     return { success: false, posted: false, error: redemptionResult.error };
-  }
-
-  // Reclassify the accumulated daily-accrual income into realized "Interest Received on Treasury Bills".
-  if (accruedReceivable > 0) {
-    const incomeResult = await ledgerController.postLedgerEntry({
-      date: maturityDate,
-      dr_account: accrualIncomeAccount,
-      cr_account: interestReceivedAccount,
-      amount: accruedReceivable,
-      deal_id: dealNumber,
-      description: `${MATURITY_INCOME_DESCRIPTION_PREFIX} ${dealNumber}`
-    });
-    if (!incomeResult.success) {
-      return { success: false, posted: false, error: incomeResult.error };
-    }
   }
 
   const matureSql = markMatured
