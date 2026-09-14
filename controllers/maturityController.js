@@ -3461,10 +3461,11 @@ const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
           }
         }
 
+        // leg1_yield_rate is the bond yield of the leg-1 trade, not the financing
+        // rate - premature maturity only changes the rate and leg 2, so leave it.
         await connection.query(
           `UPDATE buyback_deals
            SET leg1_interest_rate = ?,
-               leg1_yield_rate = ?,
                leg2_yield_rate = ?,
                leg2_value_date = ?,
                leg2_settlement_amount = ?,
@@ -3474,7 +3475,6 @@ const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
                updated_at = NOW()
            WHERE id = ? AND deal_status = 'Approved' AND approved_at IS NOT NULL`,
           [
-            rate,
             rate,
             impliedYieldRate,
             leg2ValueDate,
