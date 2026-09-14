@@ -110,40 +110,143 @@ function computeGsecCouponSettlementAmount(deal) {
   return 0;
 }
 
+function ymdDateOnly(value) {
+  if (value == null) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * True when this coupon date is the first scheduled coupon on/after the buy
+ * value date — i.e. the stub period that still carries Accrued Coupon Interest
+ * Paid at Purchase (131-101-350-128-44). Later coupons must not clear 128 again.
+ */
+async function isFirstCouponAfterPurchase(db, isin, valueDate, couponDate) {
+  const vd = ymdDateOnly(valueDate);
+  const cd = ymdDateOnly(couponDate);
+  if (!vd || !cd || !isin) return false;
+  if (vd > cd) return false;
+  const [rows] = await db.query(
+    `SELECT DATE_FORMAT(MAX(coupon_date), '%Y-%m-%d') AS prev_coupon
+       FROM isin_coupon_schedule
+      WHERE isin COLLATE utf8mb4_unicode_ci = ? COLLATE utf8mb4_unicode_ci
+        AND DATE(coupon_date) < DATE(?)`,
+    [isin, cd]
+  );
+  const prev = rows[0] && rows[0].prev_coupon;
+  if (!prev) return true;
+  return vd > prev;
+}
+
+/**
+ * Portion of today's coupon cash that clears Accrued Coupon Interest Paid at
+ * Purchase (128) instead of Interest Receivable (116). Only on the first coupon
+ * after a mid-period buy; scaled to remaining face. Caps at the coupon amount.
+ */
+function computeAccruedAtPurchaseClearAmount(deal, couponAmount) {
+  const coupon = Number(couponAmount) || 0;
+  if (!(coupon > 0)) return 0;
+
+  const face = Number(deal.face_value || 0);
+  const remaining = Number(
+    deal.remaining_face_value != null ? deal.remaining_face_value : deal.face_value
+  ) || 0;
+  if (!(face > 0) || !(remaining > 0)) return 0;
+
+  let accruedFull = Number(deal.accrued_interest);
+  if (!Number.isFinite(accruedFull) || accruedFull <= 0) {
+    const clean = Number(deal.clean_price);
+    const dirty = Number(deal.dirty_price);
+    if (Number.isFinite(clean) && Number.isFinite(dirty) && dirty > clean) {
+      accruedFull = (dirty - clean) * face / 100;
+    } else {
+      return 0;
+    }
+  }
+
+  let clear128 = Math.floor(accruedFull * (remaining / face) * 100000000) / 100000000;
+  if (clear128 > coupon) clear128 = coupon;
+  if (!(clear128 > 0)) return 0;
+  return clear128;
+}
+
+/**
+ * GSec coupon receipt journal.
+ *
+ * Finance net effect:
+ *   DR Bank                              = full coupon
+ *   CR Interest Receivable (116)         = coupon − accrued-at-purchase cleared
+ *   CR Accrued Paid at Purchase (128)    = accrued-at-purchase (first coupon only; else 0)
+ *
+ * Holding-period income was already recognised by daily accrual (DR 116 / CR income).
+ * The income ↔ receivable reclass below only reverses that holding-period slice so
+ * cash can land against income without double-counting; 128 is balance-sheet only.
+ */
 async function postGsecCouponSettlementDirect(
   db,
   {
     date,
     amount,
+    accruedAtPurchaseClear = 0,
     dealId,
     description,
     drAccruedIncomeAccountId,
     crAccruedReceivableAccountId,
     drBankAccountId,
-    crCouponIncomeAccountId
+    crCouponIncomeAccountId,
+    crAccruedAtPurchaseAccountId
   }
 ) {
+  const coupon = Number(amount) || 0;
+  if (!(coupon > 0)) return { success: false, error: 'coupon amount must be positive' };
+
+  let clear128 = Number(accruedAtPurchaseClear) || 0;
+  if (clear128 < 0) clear128 = 0;
+  if (clear128 > coupon) clear128 = coupon;
+  const clear116 = Math.floor((coupon - clear128) * 100000000) / 100000000;
+
+  // Holding-period reclass (skipped when the whole coupon clears 128 only).
+  if (clear116 > 0) {
+    await db.query(
+      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
+       VALUES (?, ?, ?, 0, ?, ?, ?)`,
+      [date, drAccruedIncomeAccountId, clear116, String(dealId), description, 'LKR']
+    );
+    await db.query(
+      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
+       VALUES (?, ?, 0, ?, ?, ?, ?)`,
+      [date, crAccruedReceivableAccountId, clear116, String(dealId), description, 'LKR']
+    );
+  }
+
   await db.query(
     `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
      VALUES (?, ?, ?, 0, ?, ?, ?)`,
-    [date, drAccruedIncomeAccountId, amount, String(dealId), description, 'LKR']
+    [date, drBankAccountId, coupon, String(dealId), description, 'LKR']
   );
-  await db.query(
-    `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
-     VALUES (?, ?, 0, ?, ?, ?, ?)`,
-    [date, crAccruedReceivableAccountId, amount, String(dealId), description, 'LKR']
-  );
-  await db.query(
-    `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
-     VALUES (?, ?, ?, 0, ?, ?, ?)`,
-    [date, drBankAccountId, amount, String(dealId), description, 'LKR']
-  );
-  await db.query(
-    `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
-     VALUES (?, ?, 0, ?, ?, ?, ?)`,
-    [date, crCouponIncomeAccountId, amount, String(dealId), description, 'LKR']
-  );
-  return { success: true };
+
+  if (clear116 > 0) {
+    await db.query(
+      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
+       VALUES (?, ?, 0, ?, ?, ?, ?)`,
+      [date, crCouponIncomeAccountId, clear116, String(dealId), description, 'LKR']
+    );
+  }
+
+  if (clear128 > 0) {
+    if (!crAccruedAtPurchaseAccountId) {
+      return { success: false, error: 'missing Accrued Coupon Interest Paid at Purchase account' };
+    }
+    await db.query(
+      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
+       VALUES (?, ?, 0, ?, ?, ?, ?)`,
+      [date, crAccruedAtPurchaseAccountId, clear128, String(dealId), description, 'LKR']
+    );
+  }
+
+  return { success: true, clear116, clear128 };
 }
 
 // POST /api/money-market/ledger-post
@@ -850,14 +953,23 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
       `GSec amortization summary: posted=${gsecAmortPostedCount}, already_posted_skipped=${gsecAmortSkippedAlreadyPosted}`
     );
 
-    // GSec coupon settlement posting on coupon date (semi-annual schedule)
+    // GSec coupon settlement posting on coupon date (semi-annual schedule).
+    // Mid-period buys: cash clears Interest Receivable (116) for the holding-
+    // period slice AND Accrued Paid at Purchase (128) for the stub paid at buy,
+    // so 116 is not overcredited. Buys on/after a coupon date leave 128 at nil
+    // (Scenario C) and only clear 116.
     let gsecCouponPostedCount = 0;
     let gsecCouponSkippedAlreadyPosted = 0;
     const gsecCouponIncomeCode = await accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.GSEC_COUPON_INCOME);
     const gsecCouponIncomeId = await resolveAccountIdByCode(db, gsecCouponIncomeCode);
+    const gsecAccruedPaidCode =
+      (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUED_INTEREST_PAID)) ||
+      '131-101-350-128-44';
+    const gsecAccruedPaidId = await resolveAccountIdByCode(db, gsecAccruedPaidCode);
     const [dueCouponDeals] = await db.query(
       `SELECT g.id, g.deal_number, g.isin_number, g.value_date, g.maturity_date, g.face_value,
               g.remaining_face_value, g.coupon_interest, g.settlement_mode,
+              g.accrued_interest, g.clean_price, g.dirty_price,
               im.coupon_rate, ics.coupon_date, ics.coupon_amount
        FROM gsec g
        JOIN isin_coupon_schedule ics
@@ -900,6 +1012,11 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
           continue;
         }
 
+        let accruedAtPurchaseClear = 0;
+        if (await isFirstCouponAfterPurchase(db, deal.isin_number, deal.value_date, deal.coupon_date)) {
+          accruedAtPurchaseClear = computeAccruedAtPurchaseClearAmount(deal, amount);
+        }
+
         let bankAccountCode = settlementAccountCache.get(String(deal.settlement_mode || ''));
         if (!bankAccountCode) {
           bankAccountCode = await resolveSettlementAccountCode(db, deal.settlement_mode);
@@ -910,12 +1027,14 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
         const lr = await postGsecCouponSettlementDirect(db, {
           date: systemDay,
           amount,
+          accruedAtPurchaseClear,
           dealId: deal.deal_number,
           description,
           drAccruedIncomeAccountId: gsecCrAccountId,
           crAccruedReceivableAccountId: gsecDrAccountId,
           drBankAccountId: bankAccountId,
-          crCouponIncomeAccountId: gsecCouponIncomeId
+          crCouponIncomeAccountId: gsecCouponIncomeId,
+          crAccruedAtPurchaseAccountId: gsecAccruedPaidId
         });
         if (!isLedgerPostOk(lr)) {
           console.error('GSec coupon settlement post failed:', deal.deal_number, lr && lr.error);
