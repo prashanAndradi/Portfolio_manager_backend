@@ -184,7 +184,12 @@ exports.getSellTransactionReport = async ({ asAtDate, portfolio, isin, valueDate
       value_date: row.value_date,
       maturity_date: row.maturity_date,
       isin: isinValue,
-      coupon_interest: formatPrice(row.coupon_interest, 4),
+      // One coupon period on this row's face, from the ISIN rate; the stored value is an
+      // entry-time figure (some rows hold the annual amount), so it is only a fallback.
+      coupon_interest: formatPrice(
+        Number(row.coupon_rate) > 0 ? (Number(row.face_value) * Number(row.coupon_rate)) / 100 / 2 : row.coupon_interest,
+        4
+      ),
       clean_price: formatPrice(row.clean_price, 4),
       yield: formatPercentage(row.yield, 4),
       dtm: dtm ? dtm.toLocaleString('en-US') : '',
