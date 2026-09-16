@@ -248,6 +248,33 @@ async function postFinalApprovedBuyLedger(transaction, options = {}) {
 }
 
 /**
+ * True when an EOD coupon settlement has already credited Accrued Coupon Interest Paid
+ * at Purchase (128) for this buy deal on or before the sell date. Checked against the
+ * ledger rather than dates, so deals whose coupon was settled before 128-clearing
+ * existed (116 took the full coupon) still clear 128 at sale as before.
+ */
+async function couponClearedAccruedAtPurchase(buyDealNumber, sellDate) {
+  if (!buyDealNumber) return false;
+  const accountMapping = require('./accountMappingService');
+  const accruedPaidCode =
+    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUED_INTEREST_PAID)) ||
+    '131-101-350-128-44';
+  const [rows] = await db.query(
+    `SELECT 1
+       FROM ledger_entries le
+       JOIN chart_of_accounts c ON c.id = le.account_id
+      WHERE le.deal_number = ?
+        AND c.account_code = ?
+        AND le.credit_amount > 0
+        AND le.description LIKE 'GSec Coupon Settlement %'
+        AND DATE(le.entry_date) <= DATE(?)
+      LIMIT 1`,
+    [buyDealNumber, accruedPaidCode, sellDate]
+  );
+  return rows.length > 0;
+}
+
+/**
  * Compute the P&L breakdown for one sold face-value slice against the one buy
  * lot it was sourced from. Shared by both the single-buy-deal Sell path and the
  * multi-lot (sell_deal_allocations) aggregation path so both stay in sync.
@@ -268,12 +295,21 @@ async function computeLotPnl({ sellFace, sellClean, sellDirty, sellDate, buyDeal
   if (buyAccruedPer100 <= 0 && sellAccruedPer100 > 0 && holdingDays === 0) {
     buyAccruedPer100 = sellAccruedPer100;
   }
-  const accruedAtPurchaseAmt = truncate8((sellFace * buyAccruedPer100) / 100);
+  // Once the first coupon after the buy has cleared 128 (EOD coupon settlement), nothing
+  // is left in 128 for this lot and 116 restarted from that coupon date - so the sale
+  // must not credit 128 again, and all of the sell accrued was earned while held.
+  const couponCleared128 = holdingDays > 0 &&
+    await couponClearedAccruedAtPurchase(buyDeal.deal_number, sellDate);
+  const accruedAtPurchaseAmt = couponCleared128
+    ? 0
+    : truncate8((sellFace * buyAccruedPer100) / 100);
 
   // 4) Holding-period coupon income — only what accrued WHILE we held the bond.
   const holdingPeriodAccruedPer100 = holdingDays === 0
     ? 0
-    : Math.max(0, sellAccruedPer100 - buyAccruedPer100);
+    : couponCleared128
+      ? sellAccruedPer100
+      : Math.max(0, sellAccruedPer100 - buyAccruedPer100);
   const holdingCouponIncome = truncate8((sellFace * holdingPeriodAccruedPer100) / 100);
 
   // 3) Amort via effective-yield — only when the bond was actually held (holdingDays > 0).
@@ -325,7 +361,7 @@ async function computeLotPnl({ sellFace, sellClean, sellDirty, sellDate, buyDeal
   return {
     buyFace, scale, buyClean, buyDirty, holdingDays, sellAccruedPer100,
     treasuryBondsAmt, accruedAtPurchaseAmt, holdingPeriodAccruedPer100,
-    holdingCouponIncome, amortToSell, carryClean
+    holdingCouponIncome, amortToSell, carryClean, couponCleared128
   };
 }
 
@@ -425,6 +461,8 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
   //   Treasury Bonds OUT (CR 453)              = sellFace x buyClean / 100
   //   Accrued Coupon Paid at Purchase (CR 458) = sellFace x (buyDirty - buyClean) / 100
   //                                              = unwind of accrued you paid at buy
+  //                                              (0 once a coupon settlement cleared it;
+  //                                              coupon income is then the full sell accrued)
   //   Amort (CR or DR 505)                     = sellFace x (carryClean - buyClean) / 100
   //                                              carryClean = bond re-priced at the
   //                                              BUY yield on the SELL date (pull-to-par
@@ -458,7 +496,7 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
   // Representative single-lot values kept for the dryRun debug payload below;
   // meaningless as single figures in the multi-lot case (each lot has its own).
   let buyFace = 0, scale = 1, buyClean = 0, buyDirty = 0, holdingDays = 0,
-    buyAccruedPer100 = 0, holdingPeriodAccruedPer100 = 0, carryClean = null;
+    buyAccruedPer100 = 0, holdingPeriodAccruedPer100 = 0, carryClean = null, couponCleared128 = false;
 
   if (isMultiLot) {
     // Sum each lot's P&L components, each computed against its own buy-side cost basis.
@@ -514,6 +552,7 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
     buyAccruedPer100 = Math.max(0, buyDirty - buyClean);
     holdingPeriodAccruedPer100 = lot.holdingPeriodAccruedPer100;
     carryClean = lot.holdingDays > 0 ? lot.carryClean : null;
+    couponCleared128 = lot.couponCleared128;
     treasuryBondsAmt = lot.treasuryBondsAmt;
     accruedAtPurchaseAmt = lot.accruedAtPurchaseAmt;
     holdingCouponIncome = lot.holdingCouponIncome;
@@ -537,9 +576,11 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
     options.accruedAtPurchaseAccountOverride ||
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUED_INTEREST_PAID)) ||
     '131-101-350-128-44';
+  // Sale clears the balance-sheet amortisation GL (134). GSEC_AMORTISATION_TRADING is the
+  // P&L side (416) of the daily EOD amortisation, so it must not be used here.
   const amortAccount =
-    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_AMORTISATION_TRADING)) ||
-    '358-101-130-416-44';
+    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_FINANCIAL_ASSETS_AMORTISED_COST)) ||
+    '131-101-350-134-44';
   // These fallback GLs only apply if a mapping lookup fails. They must match
   // account_mappings, or a failed lookup would silently post to a retired GL
   // (updated for the 2026-09-11 GL mapping change).
@@ -670,7 +711,8 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
         amortToSell,
         holdingCouponIncome,
         capitalGl,
-        holdingDays
+        holdingDays,
+        couponCleared128
       }
     };
   }

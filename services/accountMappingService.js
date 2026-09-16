@@ -20,8 +20,8 @@ const MAPPING_KEYS = {
   GSEC_ACCRUAL_ASSET: 'GSEC_ACCRUAL_ASSET', // Debit: 131-101-350-116-44 — Interest Receivable TBonds Coupon - Trading (daily accrual)
   GSEC_ACCRUAL_INCOME: 'GSEC_ACCRUAL_INCOME', // Credit: 358-101-130-404-44 — Interest Received Treasury Bonds Coupons - Trading (daily accrual)
   GSEC_COUPON_INCOME: 'GSEC_COUPON_INCOME', // Credit: 358-101-130-404-44 — Interest Received Treasury Bonds Coupons - Trading (coupon settlement)
-  GSEC_AMORTISATION_TRADING: 'GSEC_AMORTISATION_TRADING', // 358-101-130-416-44 — Amortised Discount Received/Premium Paid TBonds - Trading
-  GSEC_FINANCIAL_ASSETS_AMORTISED_COST: 'GSEC_FINANCIAL_ASSETS_AMORTISED_COST', // 131-101-350-134-44 — Amortised Discount Receivable/Premium Payable TBond - Trading (daily amortisation)
+  GSEC_AMORTISATION_TRADING: 'GSEC_AMORTISATION_TRADING', // 358-101-130-416-44 — Amortised Discount Received/Premium Paid TBonds - Trading (P&L side of daily amortisation)
+  GSEC_FINANCIAL_ASSETS_AMORTISED_COST: 'GSEC_FINANCIAL_ASSETS_AMORTISED_COST', // 131-101-350-134-44 — Amortised Discount Receivable/Premium Payable TBond - Trading (daily amortisation; cleared at sale/maturity)
   GSEC_TRADING_ACCOUNT: 'GSEC_TRADING_ACCOUNT', // Treasury Bonds - Trading A/c (131-101-350-098-44)
   GSEC_ACCRUED_INTEREST_PAID: 'GSEC_ACCRUED_INTEREST_PAID', // Accrued Coupon Interest Paid at Purchase (131-101-350-128-44)
   GSEC_CAPITAL_GAIN_LOSS: 'GSEC_CAPITAL_GAIN_LOSS', // Capital Gain/Loss on Treasury Bond (358-101-130-398-44)
@@ -60,7 +60,8 @@ const MAPPING_KEYS = {
   MATURITY_INTEREST_RECEIVABLE: 'MATURITY_INTEREST_RECEIVABLE',
   
   // Repo/Reverse Repo Accounts
-  REPO_REVERSE_REPO_ASSET: 'REPO_REVERSE_REPO_ASSET',   // 131-101-410-206-44 Reverse Repo with Banks and Other Financial Institutes
+  REPO_REVERSE_REPO_ASSET: 'REPO_REVERSE_REPO_ASSET',   // 131-101-410-206-44 Reverse Repo with Banks and Other Financial Institutes (principal only)
+  REPO_INTEREST_RECEIVABLE: 'REPO_INTEREST_RECEIVABLE',   // 131-101-350-222-44 Interest Receivable on Rev Repo with Banks and Other Financial Institutes (daily accrual DR; cleared at maturity)
   REPO_INTEREST_INCOME: 'REPO_INTEREST_INCOME',           // 467-101-190-440-44 Interest Received on R/Repo with Banks and Other Financial Institutes
   REVERSE_REPO_LIABILITY: 'REVERSE_REPO_LIABILITY',       // 249-101-330-308-44 Repo with Banks and Other Financial Institutes (principal borrowing CR, maturity, etc.)
   REVERSE_REPO_INTEREST_PAYABLE: 'REVERSE_REPO_INTEREST_PAYABLE', // 249-101-330-314-44 Interest Payable on Repo with Banks and Other Financial Institutes (Reverse Repo daily interest accrual CR)
