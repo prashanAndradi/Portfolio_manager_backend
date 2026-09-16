@@ -3,10 +3,13 @@
 /**
  * Repo / Reverse Repo maturity (and premature-maturity) ledger posting.
  *
- * Repo (borrowing) is three balanced pairs:
- *   1. DR Interest Payable 780 / CR Accrual expense 752   = interest_amount
- *   2. DR Repo liability 308   / CR Bank                  = principal
- *   3. DR Maturity expense 768 / CR Bank                  = interest_amount
+ * Repo (borrowing), per Finance's Leg 2 repayment entry:
+ *   1. DR Repo liability 308       / CR Bank = principal
+ *   2. DR Interest Payable 314     / CR Bank = interest_amount
+ * The expense was already recognised by the daily accrual (DR 752 / CR 314), so maturity
+ * only settles the payable. (Before the 2026-09-11 GL change this reversed the accrual
+ * out of 752 and re-booked it to a separate maturity expense GL; with both keys on 752
+ * that became a self-cancelling DR/CR 752 pair.)
  *
  * Reverse Repo (asset) is a single pair:
  *   DR Bank / CR Reverse Repo asset = principal + interest
@@ -88,21 +91,44 @@ async function postRepoMaturityLedger(deal, { entryDate } = {}) {
 
   const principalAmount = Number(deal.principal_amount) || 0;
   const interestAmount = Number(deal.interest_amount) || 0;
-  const maturityAmount = principalAmount + interestAmount;
 
   if (dealType === 'Reverse Repo') {
-    const repoAsset = await accountMapping.getAccountCode(
-      accountMapping.MAPPING_KEYS.REPO_REVERSE_REPO_ASSET
-    );
-    const lr = await postLedgerEntry({
-      date,
-      dr_account: bankAccount,
-      cr_account: repoAsset,
-      amount: maturityAmount,
-      deal_id: dealNumber,
-      description: `Reverse Repo Maturity - Deal ${dealNumber}`
-    });
-    if (!isOk(lr)) return { success: false, posted: false, error: lr && lr.error };
+    // Principal clears the Reverse Repo asset; interest clears the receivable
+    // the daily accrual built up, so neither GL is left carrying a balance.
+    const [repoAsset, interestReceivable] = await Promise.all([
+      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REPO_REVERSE_REPO_ASSET),
+      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REPO_INTEREST_RECEIVABLE)
+    ]);
+    const description = `Reverse Repo Maturity - Deal ${dealNumber}`;
+
+    if (principalAmount > 0) {
+      const principalLeg = await postLedgerEntry({
+        date,
+        dr_account: bankAccount,
+        cr_account: repoAsset,
+        amount: principalAmount,
+        deal_id: dealNumber,
+        description
+      });
+      if (!isOk(principalLeg)) {
+        return { success: false, posted: false, error: principalLeg && principalLeg.error };
+      }
+    }
+
+    if (interestAmount > 0) {
+      const interestLeg = await postLedgerEntry({
+        date,
+        dr_account: bankAccount,
+        cr_account: interestReceivable,
+        amount: interestAmount,
+        deal_id: dealNumber,
+        description
+      });
+      if (!isOk(interestLeg)) {
+        return { success: false, posted: false, error: interestLeg && interestLeg.error };
+      }
+    }
+
     if (deal.id != null) await markMatured(deal.id);
     return { success: true, posted: true };
   }
@@ -111,28 +137,12 @@ async function postRepoMaturityLedger(deal, { entryDate } = {}) {
     return { success: false, posted: false, error: `unsupported deal_type=${dealType}` };
   }
 
-  const [liabilityAccount, interestPayable, accrualInterestExpense, maturityInterestExpense] =
-    await Promise.all([
-      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REVERSE_REPO_LIABILITY),
-      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REVERSE_REPO_INTEREST_PAYABLE),
-      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REVERSE_REPO_INTEREST_EXPENSE),
-      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REVERSE_REPO_MATURITY_INTEREST_EXPENSE)
-    ]);
+  const [liabilityAccount, interestPayable] = await Promise.all([
+    accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REVERSE_REPO_LIABILITY),
+    accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REVERSE_REPO_INTEREST_PAYABLE)
+  ]);
 
   const description = `Repo Maturity - Deal ${dealNumber}`;
-  const reversalDescription = `Repo Interest Accrual Reversal - Deal ${dealNumber}`;
-
-  if (interestAmount > 0) {
-    const reversal = await postLedgerEntry({
-      date,
-      dr_account: interestPayable,
-      cr_account: accrualInterestExpense,
-      amount: interestAmount,
-      deal_id: dealNumber,
-      description: reversalDescription
-    });
-    if (!isOk(reversal)) return { success: false, posted: false, error: reversal && reversal.error };
-  }
 
   if (principalAmount > 0) {
     const principalLeg = await postLedgerEntry({
@@ -149,9 +159,10 @@ async function postRepoMaturityLedger(deal, { entryDate } = {}) {
   }
 
   if (interestAmount > 0) {
+    // Settle the accrued interest payable - no expense line; the daily accrual booked it.
     const interestLeg = await postLedgerEntry({
       date,
-      dr_account: maturityInterestExpense,
+      dr_account: interestPayable,
       cr_account: bankAccount,
       amount: interestAmount,
       deal_id: dealNumber,
