@@ -250,6 +250,7 @@ async function getAccountReportFigures(asAtDate) {
     '131-101-350-098-44': gsecClean,
     '131-101-350-128-44': gsecAccruedAtPurchase,
     '131-101-290-218-44': gsecAccrual,
+    '131-101-350-134-44': gsecAmort,
     '131-101-170-044-44': gsecAmort,
     // Old amortised-cost code (renamed); same report figure
     '111-101-170-044-44': gsecAmort,
