@@ -105,9 +105,10 @@ async function buildGsecMaturityJournal(rows) {
   const tradingCode =
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_TRADING_ACCOUNT)) ||
     '131-101-350-098-44';
+  // Maturity clears the balance-sheet amortisation GL (134), not the daily P&L key (416).
   const amortCode =
-    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_AMORTISATION_TRADING)) ||
-    '358-101-130-416-44';
+    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_FINANCIAL_ASSETS_AMORTISED_COST)) ||
+    '131-101-350-134-44';
 
   const maturityDate = toYmd(head.maturity_date) || new Date().toISOString().slice(0, 10);
   const description = `${MATURITY_DESCRIPTION_PREFIX} ${dealNumber}`;
