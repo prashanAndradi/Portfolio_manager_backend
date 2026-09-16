@@ -173,16 +173,16 @@ function computeAccruedAtPurchaseClearAmount(deal, couponAmount) {
 }
 
 /**
- * GSec coupon receipt journal.
- *
- * Finance net effect:
+ * GSec coupon receipt journal (Finance's entry, posted as-is):
  *   DR Bank                              = full coupon
  *   CR Interest Receivable (116)         = coupon − accrued-at-purchase cleared
- *   CR Accrued Paid at Purchase (128)    = accrued-at-purchase (first coupon only; else 0)
+ *   CR Accrued Paid at Purchase (128)    = accrued-at-purchase (first coupon after a
+ *                                          mid-period buy only; else 0)
  *
- * Holding-period income was already recognised by daily accrual (DR 116 / CR income).
- * The income ↔ receivable reclass below only reverses that holding-period slice so
- * cash can land against income without double-counting; 128 is balance-sheet only.
+ * The income was already recognised by the daily accrual (DR 116 / CR 404), so the
+ * receipt only clears balance-sheet accounts. (It used to reverse the accrual out of
+ * income and re-credit coupon income; with both income keys on 404 since the 2026-09-11
+ * GL change that became a self-cancelling DR/CR 404 pair.)
  */
 async function postGsecCouponSettlementDirect(
   db,
@@ -192,34 +192,21 @@ async function postGsecCouponSettlementDirect(
     accruedAtPurchaseClear = 0,
     dealId,
     description,
-    drAccruedIncomeAccountId,
     crAccruedReceivableAccountId,
     drBankAccountId,
-    crCouponIncomeAccountId,
     crAccruedAtPurchaseAccountId
   }
 ) {
-  const coupon = Number(amount) || 0;
+  // ledger_entries stores cents: round the coupon and the 128 slice first and derive 116 as
+  // the remainder, so DR Bank always equals CR 116 + CR 128 after storage.
+  const toCents = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  const coupon = toCents(amount);
   if (!(coupon > 0)) return { success: false, error: 'coupon amount must be positive' };
 
-  let clear128 = Number(accruedAtPurchaseClear) || 0;
+  let clear128 = toCents(accruedAtPurchaseClear);
   if (clear128 < 0) clear128 = 0;
   if (clear128 > coupon) clear128 = coupon;
-  const clear116 = Math.floor((coupon - clear128) * 100000000) / 100000000;
-
-  // Holding-period reclass (skipped when the whole coupon clears 128 only).
-  if (clear116 > 0) {
-    await db.query(
-      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
-       VALUES (?, ?, ?, 0, ?, ?, ?)`,
-      [date, drAccruedIncomeAccountId, clear116, String(dealId), description, 'LKR']
-    );
-    await db.query(
-      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
-       VALUES (?, ?, 0, ?, ?, ?, ?)`,
-      [date, crAccruedReceivableAccountId, clear116, String(dealId), description, 'LKR']
-    );
-  }
+  const clear116 = toCents(coupon - clear128);
 
   await db.query(
     `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
@@ -231,7 +218,7 @@ async function postGsecCouponSettlementDirect(
     await db.query(
       `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
        VALUES (?, ?, 0, ?, ?, ?, ?)`,
-      [date, crCouponIncomeAccountId, clear116, String(dealId), description, 'LKR']
+      [date, crAccruedReceivableAccountId, clear116, String(dealId), description, 'LKR']
     );
   }
 
@@ -960,8 +947,6 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
     // (Scenario C) and only clear 116.
     let gsecCouponPostedCount = 0;
     let gsecCouponSkippedAlreadyPosted = 0;
-    const gsecCouponIncomeCode = await accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.GSEC_COUPON_INCOME);
-    const gsecCouponIncomeId = await resolveAccountIdByCode(db, gsecCouponIncomeCode);
     const gsecAccruedPaidCode =
       (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUED_INTEREST_PAID)) ||
       '131-101-350-128-44';
@@ -1030,10 +1015,8 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
           accruedAtPurchaseClear,
           dealId: deal.deal_number,
           description,
-          drAccruedIncomeAccountId: gsecCrAccountId,
           crAccruedReceivableAccountId: gsecDrAccountId,
           drBankAccountId: bankAccountId,
-          crCouponIncomeAccountId: gsecCouponIncomeId,
           crAccruedAtPurchaseAccountId: gsecAccruedPaidId
         });
         if (!isLedgerPostOk(lr)) {
@@ -1321,13 +1304,16 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
           if (isNaN(amount) || amount === 0) continue;
 
           if (deal.deal_type === 'Reverse Repo') {
-            // Reverse Repo (asset side): accrue interest income on the asset.
+            // Reverse Repo (asset side): accrue interest income into its own
+            // receivable GL, not onto the principal asset - the principal GL
+            // must keep showing the amount lent, and maturity clears the
+            // receivable separately.
             const description = `Reverse Repo Daily Interest Accrual - Deal ${dealNumber}`;
             const key = `${dealNumber}|${description}`;
             if (repoAccrualAlready.has(key)) {
               continue;
             }
-            const drAccount = await accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REPO_REVERSE_REPO_ASSET);
+            const drAccount = await accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REPO_INTEREST_RECEIVABLE);
             const crAccount = await accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.REPO_INTEREST_INCOME);
             const lr = await postLedgerEntry({
               date: systemDay,
