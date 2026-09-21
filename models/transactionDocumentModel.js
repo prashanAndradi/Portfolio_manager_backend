@@ -22,7 +22,7 @@ class TransactionDocument {
       } = documentData;
 
       const [result] = await db.query(`
-        INSERT INTO itms.transaction_documents (
+        INSERT INTO transaction_documents (
           transaction_type,
           transaction_id,
           file_name,
@@ -65,8 +65,8 @@ class TransactionDocument {
           SELECT 
             td.*,
             u.username as uploaded_by_username
-          FROM itms.transaction_documents td
-          LEFT JOIN itms.users u ON td.uploaded_by = u.id
+          FROM transaction_documents td
+          LEFT JOIN users u ON td.uploaded_by = u.id
           WHERE td.transaction_type = ? AND td.transaction_id = ?
           ORDER BY td.created_at DESC
         `, [transactionType, transactionId]);
@@ -77,7 +77,7 @@ class TransactionDocument {
           SELECT 
             td.*,
             NULL as uploaded_by_username
-          FROM itms.transaction_documents td
+          FROM transaction_documents td
           WHERE td.transaction_type = ? AND td.transaction_id = ?
           ORDER BY td.created_at DESC
         `, [transactionType, transactionId]);
@@ -104,8 +104,8 @@ class TransactionDocument {
           SELECT 
             td.*,
             u.username as uploaded_by_username
-          FROM itms.transaction_documents td
-          LEFT JOIN itms.users u ON td.uploaded_by = u.id
+          FROM transaction_documents td
+          LEFT JOIN users u ON td.uploaded_by = u.id
           WHERE td.id = ?
         `, [id]);
       } catch (joinError) {
@@ -115,7 +115,7 @@ class TransactionDocument {
           SELECT 
             td.*,
             NULL as uploaded_by_username
-          FROM itms.transaction_documents td
+          FROM transaction_documents td
           WHERE td.id = ?
         `, [id]);
       }
@@ -152,7 +152,7 @@ class TransactionDocument {
 
       // Delete database record
       const [result] = await db.query(`
-        DELETE FROM itms.transaction_documents WHERE id = ?
+        DELETE FROM transaction_documents WHERE id = ?
       `, [id]);
 
       return result.affectedRows > 0;
@@ -188,7 +188,7 @@ class TransactionDocument {
       updateValues.push(id);
 
       const [result] = await db.query(`
-        UPDATE itms.transaction_documents
+        UPDATE transaction_documents
         SET ${updateFields.join(', ')}
         WHERE id = ?
       `, updateValues);
