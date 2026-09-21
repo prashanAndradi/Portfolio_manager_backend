@@ -108,9 +108,6 @@ router.get('/fund-movement-sources', checkAuth, async (req, res) => {
  * GET /api/fixed-deposit/requests?status=Pending
  */
 router.get('/requests', checkAuth, async (req, res) => {
-  // #region agent log
-  fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'fixedDepositRoutes.js:10',message:'GET /requests entry',data:{status:req.query.status,queryParams:req.query},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
-  // #endregion
   try {
     const { status, file_number, file_number_like } = req.query;
     
@@ -161,22 +158,11 @@ router.get('/requests', checkAuth, async (req, res) => {
     
     query += ` ORDER BY fd.created_at DESC`;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'fixedDepositRoutes.js:35',message:'before db.query',data:{query:query,params:params},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
-    // #endregion
-    
     const [requests] = await db.query(query, params);
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'fixedDepositRoutes.js:37',message:'after db.query',data:{requestsCount:requests.length,firstRequest:requests[0]||null,allRequestIds:requests.map(r=>r.id),allStatuses:requests.map(r=>r.status)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
-    // #endregion
     
     console.log(`Fetched ${requests.length} fixed deposit requests for status: ${status || 'All'}`);
     res.json(requests);
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'fixedDepositRoutes.js:42',message:'GET /requests error',data:{error:error.message,stack:error.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B'})}).catch(()=>{});
-    // #endregion
     console.error('Error fetching fixed deposit requests:', error);
     console.error('Error details:', error.message, error.stack);
     res.status(500).json({ error: 'Failed to fetch fixed deposit requests', details: error.message });

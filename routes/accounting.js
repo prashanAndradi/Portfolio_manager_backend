@@ -189,21 +189,6 @@ router.put('/chart-of-accounts/:id', auth, async (req, res) => {
 // Get general ledger entries with filtering options
 router.get('/general-ledger', auth, async (req, res) => {
   try {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes/accounting.js:179',message:'General ledger endpoint called',data:{startDate:req.query.startDate,endDate:req.query.endDate,accountId:req.query.accountId,transactionId:req.query.transactionId},timestamp:Date.now(),runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
-    
-    // #region agent log
-    let schemaCheck;
-    try {
-      const [columns] = await db.query('DESCRIBE ledger_entries');
-      schemaCheck = columns.map(c => c.Field);
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes/accounting.js:185',message:'Ledger entries table schema check',data:{columns:schemaCheck,hasDealNumber:schemaCheck.includes('deal_number'),hasTransactionId:schemaCheck.includes('transaction_id')},timestamp:Date.now(),runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
-    } catch (schemaErr) {
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes/accounting.js:189',message:'Schema check failed',data:{error:schemaErr.message},timestamp:Date.now(),runId:'post-fix',hypothesisId:'A'})}).catch(()=>{});
-    }
-    // #endregion
-    
     const { 
       startDate, 
       endDate, 
@@ -212,10 +197,6 @@ router.get('/general-ledger', auth, async (req, res) => {
       limit = 100,
       offset = 0
     } = req.query;
-    
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes/accounting.js:202',message:'Building SQL queries',data:{queryUsesTransactionId:true,countQueryUsesTransactionId:true},timestamp:Date.now(),runId:'post-fix',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     
     // When ledger points at a chart row whose account_code is an account_mappings key
     // (e.g. GSEC_ACCRUAL_INCOME_, GSEC_ACCRUAL_ASSET_C), show the mapped numeric code and name.
@@ -269,11 +250,6 @@ router.get('/general-ledger', auth, async (req, res) => {
       params.push(transactionId);
     }
     
-    // #region agent log
-    const finalCountQuery = countQuery + whereClause;
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes/accounting.js:238',message:'About to execute count query',data:{query:finalCountQuery,params:params},timestamp:Date.now(),runId:'post-fix',hypothesisId:'C'})}).catch(()=>{});
-    // #endregion
-    
     // Execute count query
     const [countResult] = await db.query(countQuery + whereClause, params);
     const total = countResult[0].total;
@@ -291,9 +267,6 @@ router.get('/general-ledger', auth, async (req, res) => {
       entries
     });
   } catch (error) {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes/accounting.js:253',message:'Error caught in general ledger endpoint',data:{errorMessage:error.message,errorCode:error.code,errno:error.errno,sqlState:error.sqlState,sqlMessage:error.sqlMessage,sql:error.sql},timestamp:Date.now(),runId:'post-fix',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     console.error('Error fetching general ledger:', error);
     res.status(500).json({ error: 'Failed to fetch general ledger' });
   }

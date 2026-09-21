@@ -11,25 +11,8 @@ const CounterpartyCorporate = {
     return rows[0] || null;
   },
   create: async (data) => {
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:13',message:'create entry',data:{hasCuxNumber:!!data.cux_number,dataKeys:Object.keys(data),creditLimit:data.credit_limit,creditLimitType:typeof data.credit_limit},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,D'})}).catch(()=>{});
-    // #endregion
     // Generate CUX number if not provided
-    let cuxNumber;
-    try {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:16',message:'before generateCuxNumber',data:{hasCuxInData:!!data.cux_number},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      cuxNumber = data.cux_number || await generateCuxNumber('corporate');
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:19',message:'after generateCuxNumber',data:{cuxNumber:cuxNumber},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-    } catch (cuxErr) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:22',message:'generateCuxNumber error',data:{error:cuxErr.message,stack:cuxErr.stack},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
-      throw cuxErr;
-    }
+    const cuxNumber = data.cux_number || await generateCuxNumber('corporate');
     
     const sql = `INSERT INTO counterparty_master_corporate (
       company_name, short_name, long_name, registration_number, tin_number, vat_number,
@@ -81,21 +64,8 @@ const CounterpartyCorporate = {
       data.cds_account || null,
       cuxNumber
     ];
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:54',message:'before db.query',data:{valuesCount:values.length,placeholdersCount:(sql.match(/\?/g)||[]).length,values:values.map((v,i)=>`val${i}:${v===null?'NULL':v===undefined?'UNDEF':typeof v}:${String(v).substring(0,50)}`)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C,D,E'})}).catch(()=>{});
-    // #endregion
-    try {
-      const [result] = await db.query(sql, values);
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:57',message:'after db.query success',data:{insertId:result.insertId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C,D,E'})}).catch(()=>{});
-      // #endregion
-      return { ...result, cux_number: cuxNumber };
-    } catch (dbErr) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'counterpartyCorporateModel.js:60',message:'db.query error',data:{error:dbErr.message,code:dbErr.code,errno:dbErr.errno,sqlState:dbErr.sqlState,sqlMessage:dbErr.sqlMessage,sql:dbErr.sql},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,C,D,E'})}).catch(()=>{});
-      // #endregion
-      throw dbErr;
-    }
+    const [result] = await db.query(sql, values);
+    return { ...result, cux_number: cuxNumber };
   },
   update: async (id, data) => {
     const sql = `UPDATE counterparty_master_corporate SET

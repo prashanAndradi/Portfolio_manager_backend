@@ -307,9 +307,6 @@ module.exports = {
   saveGsec: async (req, res) => {
     const controllerStartTime = Date.now();
     console.log('=== SAVING GSEC CONTROLLER ===');
-    // #region agent log
-    (typeof fetch === 'function') && fetch('http://127.0.0.1:7242/ingest/29dc6e6a-2fb8-4497-a57e-c480a1e8f80b',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'989560'},body:JSON.stringify({sessionId:'989560',runId:'pre-fix',hypothesisId:'H1_H2_H3',location:'isinMasterController.js:saveGsec',message:'saveGsec entry',data:{method:req.method,path:req.originalUrl,transactionType:req.body?.transactionType||req.body?.transaction_type,dealNumber:req.body?.dealNumber||req.body?.deal_number,buyDealNumber:req.body?.buyDealNumber||req.body?.buy_deal_number,sellDealsCount:Array.isArray(req.body?.sell_deals)?req.body.sell_deals.length:0,status:req.body?.status},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     
     // Set a timeout for the entire operation
     const timeout = setTimeout(() => {
