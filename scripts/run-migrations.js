@@ -45,21 +45,73 @@ async function markMigrationRun(connection, filename) {
   );
 }
 
+// Strip SQL comments (-- line comments and /* block */ comments) before
+// splitting a file on ';', quote-aware so a semicolon or comment marker
+// inside a string literal is left alone. Without this, a comment containing
+// a semicolon - even just as English punctuation like "...IF NOT EXISTS;
+// run_migrations.js treats..." - silently splits the file in the wrong
+// place and the leftover comment fragment gets sent to MySQL as a statement.
+function stripSqlComments(sql) {
+  let out = '';
+  let i = 0;
+  let quote = null; // ' or " when inside a string literal
+  while (i < sql.length) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+    if (quote) {
+      out += ch;
+      if (ch === '\\' && next !== undefined) {
+        // Preserve escaped character as-is (e.g. \' inside a string).
+        out += next;
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '-' && next === '-') {
+      while (i < sql.length && sql[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i += 1;
+      i += 2;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
 // Execute SQL file
 async function executeSqlFile(connection, filePath, deferredStatements = []) {
   const sql = fs.readFileSync(filePath, 'utf8');
-  const statements = sql
+  const statements = stripSqlComments(sql)
     .split(';')
     .map(s => s.trim())
-    .filter(s => s && !s.startsWith('--') && !s.startsWith('/*'));
+    .filter(Boolean);
   
   for (const statement of statements) {
     if (statement.length > 0) {
       try {
         await connection.query(statement);
       } catch (error) {
-        // Ignore "table already exists" errors
-        if (error.code === 'ER_TABLE_EXISTS_ERROR' || error.code === 'ER_DUP_FIELDNAME') {
+        // Ignore "table/column/key/constraint already exists" errors
+        if (
+          error.code === 'ER_TABLE_EXISTS_ERROR' ||
+          error.code === 'ER_DUP_FIELDNAME' ||
+          error.code === 'ER_DUP_KEYNAME' ||
+          error.code === 'ER_FK_DUP_NAME' // duplicate foreign key constraint name
+        ) {
           console.log(`  ⚠ Skipped (already exists): ${error.message.substring(0, 60)}...`);
         } else if (
           // Defer statements that depend on tables/columns created later
@@ -454,9 +506,11 @@ async function runMigrations() {
     connection = await mysql.createConnection(dbConfig);
     console.log('✓ Connected to database\n');
     
-    // Ensure database exists
-    await connection.query(`CREATE DATABASE IF NOT EXISTS ${dbConfig.database}`);
-    await connection.query(`USE ${dbConfig.database}`);
+    // Ensure database exists. Backtick-quote the name - unquoted, a name
+    // containing a hyphen (e.g. "ITMS-LV1") is a SQL syntax error.
+    const quotedDbName = `\`${dbConfig.database.replace(/`/g, '``')}\``;
+    await connection.query(`CREATE DATABASE IF NOT EXISTS ${quotedDbName}`);
+    await connection.query(`USE ${quotedDbName}`);
     
     // Create migrations tracking table
     await createMigrationsTable(connection);

@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { differenceInDays, parseISO } = require('date-fns');
 const { isTransactionsView, resolveTransactionDateRange, appendValueDateRange } = require('./reportViewHelper');
+const { computeTbillDailyAccrual } = require('./tbillLedgerService');
 
 function formatCurrency(value, decimals = 2) {
   if (value === null || value === undefined || value === '') return '';
@@ -50,6 +51,22 @@ function resolveEffectiveRemainingFace(row) {
   const sold = Number(row._direct_sold_against_deal ?? 0);
   if (sold <= 0) return face;
   return Math.max(0, Number(row.remaining_face_value_report ?? face) || 0);
+}
+
+/**
+ * Per-day accrual and accrued interest to date for the face held as at the report date.
+ * Uses the EOD's own daily formula on the held face (not the stored per_day_accrual /
+ * accrued_interest_to_date, which follow the stored remaining face and are wrong for past
+ * as-at dates or if that balance drifts). Finance day count: (as-at - value date) - 1 days.
+ */
+function heldFaceAccrual(row, heldFace, asAtYmd) {
+  const computed = computeTbillDailyAccrual({ ...row, remaining_face_value: heldFace });
+  if (!computed.ok) return { perDay: 0, accrued: 0, days: 0 };
+  const valueYmd = clampToYmd(row.value_date);
+  const tenor = Number(row.days_to_maturity) || 0;
+  let days = valueYmd && asAtYmd ? Math.round((Date.parse(asAtYmd) - Date.parse(valueYmd)) / 86400000) - 1 : 0;
+  days = Math.max(0, Math.min(days, tenor));
+  return { perDay: computed.amount, accrued: computed.amount * days, days };
 }
 
 function resolvePortfolioDisplay(row) {
@@ -332,6 +349,7 @@ exports.getTbillReport = async ({ asAtDate, portfolio, isin, valueDate, maturity
       }
 
       const remainingFormatted = formatCurrency(remainingFace, 2);
+      const accrual = heldFaceAccrual(row, remainingFace, clampToYmd(effectiveAsAt));
 
       return {
         id: row.id,
@@ -351,8 +369,8 @@ exports.getTbillReport = async ({ asAtDate, portfolio, isin, valueDate, maturity
         portfolio: resolvePortfolioDisplay(row),
         buy_deal_number: '',
         remaining_face_value: remainingFormatted,
-        per_day_accrual: formatPrice(row.per_day_accrual, 2),
-        accrued_interest_to_date: formatPrice(row.accrued_interest_to_date, 2)
+        per_day_accrual: formatPrice(accrual.perDay, 2),
+        accrued_interest_to_date: formatPrice(accrual.accrued, 2)
       };
     });
 
