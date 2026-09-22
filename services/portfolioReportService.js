@@ -37,16 +37,23 @@ function formatPrice(value, decimals = 4) {
   });
 }
 
-exports.getPortfolioReport = async ({ startDate, endDate, product, portfolio, page, pageSize }) => {
-  console.log(`[Portfolio Report] Called with startDate: ${startDate}, endDate: ${endDate}, product: ${product}, portfolio: ${portfolio}`);
+exports.getPortfolioReport = async ({ asAtDate, startDate, endDate, product, portfolio, page, pageSize }) => {
+  // As-at reporting: everything dealt on or before the date. startDate/endDate are still
+  // accepted so older callers keep working, but asAtDate wins when both are given.
+  const effectiveAsAt = asAtDate || endDate || null;
+  console.log(`[Portfolio Report] Called with asAtDate: ${effectiveAsAt}, product: ${product}, portfolio: ${portfolio}`);
   
   const results = [];
   
   // Helper function to build date filter for a specific column
   const buildDateFilter = (columnName) => {
-    let filter = '';
     const filterParams = [];
-    if (startDate && endDate) {
+    let filter = '';
+    if (asAtDate) {
+      // Holdings as at the date: dealt on or before it.
+      filter = ` AND DATE(${columnName}) <= DATE(?)`;
+      filterParams.push(asAtDate);
+    } else if (startDate && endDate) {
       filter = ` AND ${columnName} >= ? AND ${columnName} <= ?`;
       filterParams.push(startDate, endDate);
     } else if (startDate) {
@@ -114,7 +121,7 @@ exports.getPortfolioReport = async ({ startDate, endDate, product, portfolio, pa
     gsecRows.forEach(row => {
       // Determine if deal has matured (maturity_date <= endDate or today)
       const maturityDate = row.maturity_date ? new Date(row.maturity_date) : null;
-      const endDateObj = endDate ? new Date(endDate) : new Date();
+      const endDateObj = effectiveAsAt ? new Date(effectiveAsAt) : new Date();
       const isMatured = maturityDate && maturityDate <= endDateObj;
       
       // Use maturity_amount if matured, otherwise settlement_amount
@@ -189,7 +196,7 @@ exports.getPortfolioReport = async ({ startDate, endDate, product, portfolio, pa
     mmRows.forEach(row => {
       // Determine if deal has matured
       const maturityDate = row.maturity_date ? new Date(row.maturity_date) : null;
-      const endDateObj = endDate ? new Date(endDate) : new Date();
+      const endDateObj = effectiveAsAt ? new Date(effectiveAsAt) : new Date();
       const isMatured = maturityDate && maturityDate <= endDateObj;
       
       // Use maturity_value if matured, otherwise principal_amount
@@ -264,7 +271,7 @@ exports.getPortfolioReport = async ({ startDate, endDate, product, portfolio, pa
     repoRows.forEach(row => {
       // Determine if deal has matured
       const maturityDate = row.maturity_date ? new Date(row.maturity_date) : null;
-      const endDateObj = endDate ? new Date(endDate) : new Date();
+      const endDateObj = effectiveAsAt ? new Date(effectiveAsAt) : new Date();
       const isMatured = maturityDate && maturityDate <= endDateObj;
       
       // Use maturity_amount if matured, otherwise principal_amount
@@ -416,7 +423,7 @@ exports.getPortfolioReport = async ({ startDate, endDate, product, portfolio, pa
 
     tbillRows.forEach(row => {
       const maturityDate = row.maturity_date ? new Date(row.maturity_date) : null;
-      const endDateObj = endDate ? new Date(endDate) : new Date();
+      const endDateObj = effectiveAsAt ? new Date(effectiveAsAt) : new Date();
       const isMatured = maturityDate && maturityDate <= endDateObj;
       const amount = isMatured && row.maturity_amount ? row.maturity_amount : (row.settlement_amount || row.face_value);
 
