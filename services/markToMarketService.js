@@ -506,6 +506,42 @@ class MarkToMarketService {
     ];
 
     await db.query(sql, values);
+    await this.recordQuoteHistory(values);
+  }
+
+  /**
+   * Keep each uploaded quote against the date it applies to. mark_to_market holds only the
+   * latest row per ISIN, so without this an as-at valuation can only use today's yields.
+   * Never fails an upload: if the history table is missing (migration not yet run) or the
+   * insert fails, it logs and moves on.
+   */
+  async recordQuoteHistory(values) {
+    try {
+      const quoteDate = await this.resolveValueDate();
+      if (!quoteDate) return;
+      const [series, isinNumber, instrumentType, isinIssuer, maturityDate, buyingPrice, sellingPrice,
+        averagePrice, buyingYield, sellingYield, averageYield, dirtyPrice, excelSource, quoteSource] = values;
+      await db.query(
+        `INSERT INTO mark_to_market_history (
+           isin_number, quote_date, series, instrument_type, isin_issuer, maturity_date,
+           buying_price, selling_price, average_price, buying_yield, selling_yield, average_yield,
+           dirty_price, excel_source, quote_source
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           series = VALUES(series), instrument_type = VALUES(instrument_type),
+           isin_issuer = VALUES(isin_issuer), maturity_date = VALUES(maturity_date),
+           buying_price = VALUES(buying_price), selling_price = VALUES(selling_price),
+           average_price = VALUES(average_price), buying_yield = VALUES(buying_yield),
+           selling_yield = VALUES(selling_yield), average_yield = VALUES(average_yield),
+           dirty_price = VALUES(dirty_price), excel_source = VALUES(excel_source),
+           quote_source = VALUES(quote_source)`,
+        [isinNumber, quoteDate, series, instrumentType, isinIssuer, maturityDate, buyingPrice,
+          sellingPrice, averagePrice, buyingYield, sellingYield, averageYield, dirtyPrice,
+          excelSource, quoteSource]
+      );
+    } catch (error) {
+      console.warn('Could not record mark-to-market quote history:', error.message);
+    }
   }
 
   curveFromRows(rows, valueDate) {
