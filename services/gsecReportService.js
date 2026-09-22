@@ -219,7 +219,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
       LEFT JOIN counterparty_master_individual ind ON (g.counterparty_id LIKE 'i%' AND CAST(SUBSTRING(g.counterparty_id, 2) AS UNSIGNED) = ind.id) OR (g.counterparty_id = ind.id)
       LEFT JOIN counterparty_master_joint joint ON (g.counterparty_id LIKE 'j%' AND CAST(SUBSTRING(g.counterparty_id, 2) AS UNSIGNED) = joint.id) OR (g.counterparty_id = joint.id)
       WHERE g.transaction_type = 'Buy'
-        AND COALESCE(g.status, '') <> 'cancelled'
+        AND COALESCE(g.status, '') NOT IN ('cancelled', 'rejected')
         AND NOT (
           g.buyback_deal_id IS NOT NULL
           AND EXISTS (
@@ -541,7 +541,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
 
     // Buy totals per ISIN
     let buySql = `SELECT isin_number, SUM(face_value) AS total_fv, SUM(face_value * clean_price) AS sum_fvcp
-      FROM gsec WHERE isin_number IN (${ph}) AND transaction_type = 'Buy' AND COALESCE(status, '') <> 'cancelled'`;
+      FROM gsec WHERE isin_number IN (${ph}) AND transaction_type = 'Buy' AND COALESCE(status, '') NOT IN ('cancelled', 'rejected')`;
     const buyParams = [...uniqueIsins];
     if (portfolio) { buySql += ' AND portfolio = ?'; buyParams.push(portfolio); }
     if (valueDate) { buySql += ' AND value_date = ?'; buyParams.push(valueDate); }
@@ -860,7 +860,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
   let totalPortfolioBalance = null;
   if (portfolio) {
     // Calculate total balance using remaining face value (stored on row, or sell/buyback-derived)
-    const balanceSql = `SELECT g.deal_number, g.face_value, g.remaining_face_value, g.isin_number AS isin FROM gsec g WHERE g.transaction_type = 'Buy' AND COALESCE(g.status, '') <> 'cancelled' AND COALESCE(g.matured, 0) = 0 AND NOT (g.buyback_deal_id IS NOT NULL AND EXISTS (SELECT 1 FROM buyback_deals bd_letter WHERE bd_letter.id = g.buyback_deal_id AND bd_letter.leg1_transaction_type = 'Buy' AND bd_letter.leg2_transaction_type = 'Sell'))` +
+    const balanceSql = `SELECT g.deal_number, g.face_value, g.remaining_face_value, g.isin_number AS isin FROM gsec g WHERE g.transaction_type = 'Buy' AND COALESCE(g.status, '') NOT IN ('cancelled', 'rejected') AND COALESCE(g.matured, 0) = 0 AND NOT (g.buyback_deal_id IS NOT NULL AND EXISTS (SELECT 1 FROM buyback_deals bd_letter WHERE bd_letter.id = g.buyback_deal_id AND bd_letter.leg1_transaction_type = 'Buy' AND bd_letter.leg2_transaction_type = 'Sell'))` +
       (portfolio ? ' AND g.portfolio = ?' : '') +
       (isin ? ' AND g.isin_number = ?' : '') +
       (valueDate ? ' AND g.value_date = ?' : '') +
@@ -888,7 +888,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
     // Skip buyback letter Sells (null buy_deal_number but not real inventory).
     if (balanceRows.length) {
       const [isinRows] = await db.query(
-        `SELECT DISTINCT isin_number FROM gsec WHERE transaction_type = 'Buy' AND COALESCE(status, '') <> 'cancelled'` +
+        `SELECT DISTINCT isin_number FROM gsec WHERE transaction_type = 'Buy' AND COALESCE(status, '') NOT IN ('cancelled', 'rejected')` +
           (portfolio ? ' AND portfolio = ?' : '') +
           (isin ? ' AND isin_number = ?' : '') +
           (valueDate ? ' AND value_date = ?' : '') +
@@ -917,7 +917,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
         const buyMetaSql =
           `SELECT id, portfolio, deal_number, isin_number AS isin, face_value, value_date
            FROM gsec
-           WHERE transaction_type = 'Buy' AND COALESCE(status, '') <> 'cancelled' AND isin_number IN (${ph})` +
+           WHERE transaction_type = 'Buy' AND COALESCE(status, '') NOT IN ('cancelled', 'rejected') AND isin_number IN (${ph})` +
           (portfolio ? ' AND portfolio = ?' : '') +
           (isin ? ' AND isin_number = ?' : '') +
           (valueDate ? ' AND value_date = ?' : '') +

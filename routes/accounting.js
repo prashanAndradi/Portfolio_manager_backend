@@ -782,7 +782,7 @@ router.get('/settlement-preview', auth, async (req, res) => {
       LEFT JOIN chart_of_accounts ca ON ca.id = le.account_id
       WHERE g.transaction_type = 'Buy'
         AND g.buyback_deal_id IS NULL
-        AND g.status != 'cancelled'
+        AND g.status NOT IN ('cancelled', 'rejected')
         AND YEAR(g.value_date)  = ?
         AND MONTH(g.value_date) IN (${mp})
       ORDER BY g.value_date, g.deal_number, le.id
@@ -813,7 +813,7 @@ router.get('/settlement-preview', auth, async (req, res) => {
       LEFT JOIN chart_of_accounts ca ON ca.id = le.account_id
       WHERE g.transaction_type = 'Sell'
         AND g.buyback_deal_id IS NULL
-        AND g.status != 'cancelled'
+        AND g.status NOT IN ('cancelled', 'rejected')
         AND YEAR(g.value_date)  = ?
         AND MONTH(g.value_date) IN (${mp})
       ORDER BY g.value_date, g.deal_number, le.id
@@ -846,7 +846,7 @@ router.get('/settlement-preview', auth, async (req, res) => {
       LEFT JOIN chart_of_accounts ca ON ca.id = le.account_id
       WHERE g.transaction_type = 'Buy'
         AND g.buyback_deal_id IS NOT NULL
-        AND g.status != 'cancelled'
+        AND g.status NOT IN ('cancelled', 'rejected')
         AND YEAR(g.value_date)  = ?
         AND MONTH(g.value_date) IN (${mp})
       ORDER BY g.value_date, g.deal_number, le.id
@@ -886,7 +886,7 @@ router.get('/settlement-preview', auth, async (req, res) => {
           SELECT 1 FROM gsec gx
           WHERE gx.buyback_deal_id = bd.id
             AND gx.transaction_type = 'Buy'
-            AND gx.status != 'cancelled'
+            AND gx.status NOT IN ('cancelled', 'rejected')
         )
 
       UNION ALL
@@ -922,7 +922,7 @@ router.get('/settlement-preview', auth, async (req, res) => {
           SELECT 1 FROM gsec gx
           WHERE gx.buyback_deal_id = bd.id
             AND gx.transaction_type = 'Buy'
-            AND gx.status != 'cancelled'
+            AND gx.status NOT IN ('cancelled', 'rejected')
         )
     `, [
       ...SETTLEMENT_EXCL_LIKE, year, ...months,
