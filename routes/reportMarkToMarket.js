@@ -69,6 +69,34 @@ router.get('/', async (req, res) => {
     } = req.query;
     const effectiveAsAt = await resolveAsAtDate(asAtDate);
 
+    // Portfolio Mark to Market (Finance's layout): per-holding rows valued at the purchased
+    // and market yield. Open Sell/Buy buyback positions are excluded.
+    if (String(req.query.view || '').toLowerCase() === 'portfolio') {
+      const { getPortfolioMarkToMarket } = require('../services/portfolioMtmReportService');
+      const result = await getPortfolioMarkToMarket({ asAtDate: effectiveAsAt, portfolio, isin });
+
+      if (format === 'csv' || format === 'excel' || format === 'pdf') {
+        const reportExporter = require('../utils/reportExporter');
+        const fileBuffer = await reportExporter.exportPortfolioMarkToMarket(format, result);
+        const ext = format === 'excel' ? 'xlsx' : format;
+        res.setHeader('Content-Disposition', 'attachment; filename=portfolio_mark_to_market.' + ext);
+        res.setHeader('Content-Type', reportExporter.getMimeType(format));
+        return res.send(fileBuffer);
+      }
+
+      const pg = Number(page) || 1;
+      const ps = Number(pageSize) || 20;
+      const offset = (pg - 1) * ps;
+      return res.json({
+        data: result.data.slice(offset, offset + ps),
+        total: result.data.length,
+        totals: result.totals,
+        asAtDate: result.asAtDate,
+        excluded: result.excluded,
+        outstanding: { sells: [], buybacks: [], tbillSells: [] }
+      });
+    }
+
     let mtmSql = `
       SELECT
         mtm.series,

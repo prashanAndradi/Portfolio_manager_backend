@@ -129,6 +129,7 @@ exports.getPortfolioReport = async (req, res) => {
     console.log('Query params:', req.query);
     
     const {
+      asAtDate,
       startDate,
       endDate,
       product,
@@ -138,13 +139,14 @@ exports.getPortfolioReport = async (req, res) => {
       pageSize
     } = req.query;
 
-    // Validate required params
-    if (!startDate || !endDate) {
-      return res.status(400).json({ error: 'Start date and end date are required' });
+    // As-at reporting. startDate/endDate stay supported for older callers.
+    if (!asAtDate && !(startDate && endDate)) {
+      return res.status(400).json({ error: 'As at date is required' });
     }
 
     // Fetch report data
     const reportParams = {
+      asAtDate,
       startDate,
       endDate,
       product,

@@ -1993,3 +1993,142 @@ exports.getMimeType = (format) => {
   if (format === 'pdf') return 'application/pdf';
   return 'application/octet-stream';
 };
+
+/**
+ * Portfolio Mark to Market export - Finance's layout: title, report date, header,
+ * one row per holding grouped by maturity (blank row between maturities), then the
+ * GSEC Portfolio total. `payload` is services/portfolioMtmReportService's result.
+ */
+const PORTFOLIO_MTM_COLUMNS = [
+  { key: 'maturity_date', label: 'Maturity', width: 14 },
+  { key: 'face_value', label: 'Face Value Rs.', width: 20 },
+  { key: 'coupon', label: 'Coupon', width: 11 },
+  { key: 'purchased_yield', label: 'Purchased Yield', width: 15 },
+  { key: 'market_yield', label: 'Market Yield', width: 13 },
+  { key: 'value_at_purchased_yield', label: 'Value as at Purchased Yield', width: 26 },
+  { key: 'value_at_market_yield', label: 'Value as at Market Yield', width: 24 },
+  { key: 'profit_loss', label: 'Profit (Loss) Rs.', width: 20 }
+];
+
+function groupPortfolioMtmByMaturity(rows) {
+  const groups = [];
+  for (const row of rows || []) {
+    const last = groups[groups.length - 1];
+    if (last && last.maturity === row.maturity_date) last.rows.push(row);
+    else groups.push({ maturity: row.maturity_date, rows: [row] });
+  }
+  return groups;
+}
+
+exports.exportPortfolioMarkToMarket = async (format, payload) => {
+  const rows = (payload && payload.data) || [];
+  const totals = (payload && payload.totals) || {};
+  const asAt = (payload && payload.asAtDate) || '';
+  const pct = (v) => (v === null || v === undefined || v === '' ? '' : Number(v) / 100);
+
+  if (format === 'csv') {
+    const parser = new Parser({ fields: PORTFOLIO_MTM_COLUMNS.map((c) => ({ label: c.label, value: c.key })) });
+    const body = parser.parse(rows);
+    return [
+      'Portfolio Mark to market,,Date,' + asAt,
+      '',
+      body,
+      '',
+      'GSEC Portfolio,' + (totals.face_value == null ? '' : totals.face_value) + ',,,,,,' + (totals.profit_loss == null ? '' : totals.profit_loss)
+    ].join('\n');
+  }
+
+  if (format === 'excel') {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Mark to Market Report');
+    sheet.columns = PORTFOLIO_MTM_COLUMNS.map((c) => ({ key: c.key, width: c.width }));
+
+    sheet.addRow(['Portfolio Mark to market']).font = { bold: true, size: 14 };
+    const dateRow = sheet.addRow(['Date', asAt]);
+    dateRow.getCell(1).font = { bold: true };
+    sheet.addRow([]);
+    const header = sheet.addRow(PORTFOLIO_MTM_COLUMNS.map((c) => c.label));
+    header.font = { bold: true };
+    header.alignment = { wrapText: true, vertical: 'bottom' };
+
+    let rowsAdded = 0;
+    for (const group of groupPortfolioMtmByMaturity(rows)) {
+      for (const r of group.rows) {
+        const line = sheet.addRow([
+          r.maturity_date,
+          toExcelNumber(r.face_value),
+          pct(r.coupon),
+          pct(r.purchased_yield),
+          pct(r.market_yield),
+          r.value_at_purchased_yield === null || r.value_at_purchased_yield === undefined ? '' : Number(r.value_at_purchased_yield),
+          r.value_at_market_yield === null || r.value_at_market_yield === undefined ? '' : Number(r.value_at_market_yield),
+          toExcelNumber(r.profit_loss)
+        ]);
+        line.getCell(2).numFmt = '#,##0.00';
+        for (const c of [3, 4, 5]) line.getCell(c).numFmt = '0.0000%';
+        for (const c of [6, 7]) line.getCell(c).numFmt = '#,##0.000000';
+        line.getCell(8).numFmt = '#,##0.00;[Red](#,##0.00)';
+        rowsAdded++;
+      }
+      sheet.addRow([]);
+    }
+
+    const totalRow = sheet.addRow(['GSEC Portfolio', toExcelNumber(totals.face_value), '', '', '', '', '', toExcelNumber(totals.profit_loss)]);
+    totalRow.font = { bold: true };
+    totalRow.getCell(2).numFmt = '#,##0.00';
+    totalRow.getCell(8).numFmt = '#,##0.00;[Red](#,##0.00)';
+    sheet.addRow([]);
+    sheet.addRow([rowsAdded + ' holding(s). Open Sell/Buy buyback positions are not included.']).font = { italic: true, size: 9 };
+
+    return workbook.xlsx.writeBuffer();
+  }
+
+  if (format === 'pdf') {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+      const chunks = [];
+      doc.on('data', (c) => chunks.push(c));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+
+      doc.fontSize(14).text('Portfolio Mark to market', { align: 'center' });
+      doc.fontSize(9).text('Date: ' + asAt, { align: 'center' });
+      doc.moveDown(0.6);
+
+      const startX = 30;
+      const widths = [70, 95, 55, 75, 70, 110, 105, 100];
+      const headers = PORTFOLIO_MTM_COLUMNS.map((c) => c.label);
+      const fmtNum = (v, dp) => (v === null || v === undefined || v === '' ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp }));
+      const fmtPct = (v) => (v === null || v === undefined || v === '' ? '' : Number(v).toFixed(4) + '%');
+
+      const drawRow = (cells, opts) => {
+        const bold = opts && opts.bold;
+        if (doc.y > doc.page.height - 50) doc.addPage();
+        const y = doc.y;
+        let x = startX;
+        doc.fontSize(bold ? 8 : 7.5).font(bold ? 'Helvetica-Bold' : 'Helvetica');
+        cells.forEach((text, i) => {
+          doc.text(String(text === null || text === undefined ? '' : text), x, y, { width: widths[i], align: i === 0 ? 'left' : 'right' });
+          x += widths[i];
+        });
+        doc.y = y + (bold ? 14 : 12);
+      };
+
+      drawRow(headers, { bold: true });
+      for (const group of groupPortfolioMtmByMaturity(rows)) {
+        for (const r of group.rows) {
+          drawRow([
+            r.maturity_date, fmtNum(r.face_value, 2), fmtPct(r.coupon), fmtPct(r.purchased_yield), fmtPct(r.market_yield),
+            fmtNum(r.value_at_purchased_yield, 6), fmtNum(r.value_at_market_yield, 6), fmtNum(r.profit_loss, 2)
+          ]);
+        }
+        doc.y += 4;
+      }
+      drawRow(['GSEC Portfolio', fmtNum(totals.face_value, 2), '', '', '', '', '', fmtNum(totals.profit_loss, 2)], { bold: true });
+      doc.fontSize(7).font('Helvetica').text('Open Sell/Buy buyback positions are not included.', startX, doc.y + 6);
+      doc.end();
+    });
+  }
+
+  throw new Error('Unsupported format: ' + format);
+};
