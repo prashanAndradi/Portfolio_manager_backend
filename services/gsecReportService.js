@@ -256,8 +256,8 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
       params.push(asAtDate);
     }
     
-    // Deals: lowest yield first, then ISIN / id as stable tiebreakers.
-    sql += ` ORDER BY (g.yield IS NULL) ASC, g.yield ASC, g.isin_number, g.id`;
+    // Deals: earliest maturity first, then ISIN / id as stable tiebreakers.
+    sql += ` ORDER BY (g.maturity_date IS NULL) ASC, g.maturity_date ASC, g.isin_number, g.id`;
 
     console.log(`[GSEC Report] SQL Query: ${sql}`);
     console.log(`[GSEC Report] Params:`, params);
