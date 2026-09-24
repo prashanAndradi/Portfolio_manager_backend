@@ -718,6 +718,19 @@ module.exports = {
 
       const transaction = currentTransaction[0];
 
+      // Guard: a rejected deal must be edited and resubmitted (PUT /gsec/:id, which
+      // resets status to 'pending' with the corrected data) before it can move again.
+      // Without this, this endpoint would silently accept status:'approved' on a
+      // rejected row - current_approval_level is reset to 'front_office' on rejection,
+      // so it would pass the normal role/stage check and advance the SAME unedited
+      // (e.g. duplicate) deal straight into the back-office queue.
+      if (transaction.status === 'rejected') {
+        return res.status(409).json({
+          success: false,
+          error: 'This deal was rejected and must be edited and resubmitted from the create page before it can be approved or rejected again.'
+        });
+      }
+
       // Only the role that owns the deal's CURRENT stage may advance or reject
       // it. Gsec.updateStatus always advances exactly one tier server-side, so
       // this can't be skip-a-stage exploited the way buyback's status field
