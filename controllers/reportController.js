@@ -1,5 +1,6 @@
 const gsecReportService = require('../services/gsecReportService');
 const portfolioReportService = require('../services/portfolioReportService');
+const portfolioOutstandingService = require('../services/portfolioOutstandingService');
 const counterpartyReportService = require('../services/counterpartyReportService');
 const buybackReportService = require('../services/buybackReportService');
 const repoReportService = require('../services/repoReportService');
@@ -77,7 +78,7 @@ exports.getGsecReport = async (req, res) => {
       if (isSummaryOnly) {
         // ISIN-wise summary report (its own tab) – export summary only
         const fileBuffer = await reportExporter.exportGsecSummary(format, summary || []);
-        res.setHeader('Content-Disposition', `attachment; filename=gsec_summary_report.${format === 'excel' ? 'xlsx' : format}`);
+        res.setHeader('Content-Disposition', `attachment; filename=t_bond_summary_report.${format === 'excel' ? 'xlsx' : format}`);
         res.setHeader('Content-Type', reportExporter.getMimeType(format));
         return res.send(fileBuffer);
       }
@@ -86,8 +87,8 @@ exports.getGsecReport = async (req, res) => {
         ? await reportExporter.exportGsecTransactions(format, data)
         : await reportExporter.export(format, data);
       const filename = isTransactions
-        ? `gsec_transactions_report.${format === 'excel' ? 'xlsx' : format}`
-        : `gsec_report.${format === 'excel' ? 'xlsx' : format}`;
+        ? `t_bond_transactions_report.${format === 'excel' ? 'xlsx' : format}`
+        : `t_bond_report.${format === 'excel' ? 'xlsx' : format}`;
       res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
       res.setHeader('Content-Type', reportExporter.getMimeType(format));
       return res.send(fileBuffer);
@@ -134,6 +135,7 @@ exports.getPortfolioReport = async (req, res) => {
       endDate,
       product,
       portfolio,
+      isin,
       format,
       page,
       pageSize
@@ -142,6 +144,40 @@ exports.getPortfolioReport = async (req, res) => {
     // As-at reporting. startDate/endDate stay supported for older callers.
     if (!asAtDate && !(startDate && endDate)) {
       return res.status(400).json({ error: 'As at date is required' });
+    }
+
+    // `view` selects the report type. Anything other than the two new as-at
+    // views falls through to the original deal-listing report unchanged, so
+    // existing callers (and saved links) keep behaving exactly as before.
+    const view = String(req.query.view || 'detailed').toLowerCase();
+    if (view === 'outstanding' || view === 'summary') {
+      if (!asAtDate) {
+        return res.status(400).json({ error: 'As at date is required' });
+      }
+      const isExport = format === 'csv' || format === 'excel' || format === 'pdf';
+      const outstandingParams = { asAtDate, portfolio, isin };
+      if (view === 'outstanding' && !isExport) {
+        outstandingParams.page = page ? Number(page) : undefined;
+        outstandingParams.pageSize = pageSize ? Number(pageSize) : undefined;
+      }
+      const result =
+        view === 'summary'
+          ? await portfolioOutstandingService.getPortfolioSummary(outstandingParams)
+          : await portfolioOutstandingService.getPortfolioOutstanding(outstandingParams);
+
+      if (isExport) {
+        const fileBuffer = view === 'summary'
+          ? await reportExporter.exportPortfolioSummary(format, result.data, result.totals, asAtDate)
+          : await reportExporter.exportPortfolioOutstanding(format, result.data, result.totals, asAtDate);
+        const filename = view === 'summary'
+          ? `portfolio_summary_report.${format === 'excel' ? 'xlsx' : format}`
+          : `portfolio_outstanding_report.${format === 'excel' ? 'xlsx' : format}`;
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+        res.setHeader('Content-Type', reportExporter.getMimeType(format));
+        return res.send(fileBuffer);
+      }
+
+      return res.json(result);
     }
 
     // Fetch report data
@@ -228,7 +264,7 @@ exports.getCounterpartyReport = async (req, res) => {
     // Handle export formats
     if (format === 'csv' || format === 'excel' || format === 'pdf') {
       const fileBuffer = await reportExporter.export(format, data);
-      res.setHeader('Content-Disposition', `attachment; filename=counterparty_report.${format === 'excel' ? 'xlsx' : format}`);
+      res.setHeader('Content-Disposition', `attachment; filename=counterparty_transaction_report.${format === 'excel' ? 'xlsx' : format}`);
       res.setHeader('Content-Type', reportExporter.getMimeType(format));
       return res.send(fileBuffer);
     }
@@ -473,9 +509,11 @@ exports.getTbillReport = async (req, res) => {
     const { data, total, totalPortfolioBalance } = await tbillReportService.getTbillReport(reportParams);
 
     if (format === 'csv' || format === 'excel' || format === 'pdf') {
-      const fileBuffer = await reportExporter.exportTbill(format, data);
       const isTransactions = String(view || '').toLowerCase() === 'transactions'
         || String(view || '').toLowerCase() === 'transaction';
+      const fileBuffer = isTransactions
+        ? await reportExporter.exportTbillTransactions(format, data)
+        : await reportExporter.exportTbill(format, data);
       const filename = isTransactions
         ? `tbill_transactions_report.${format === 'excel' ? 'xlsx' : format}`
         : `tbill_report.${format === 'excel' ? 'xlsx' : format}`;
