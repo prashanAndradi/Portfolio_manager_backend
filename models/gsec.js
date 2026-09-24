@@ -1345,9 +1345,9 @@ const Gsec = {
         newStatus = newStatus === 'final_approved' ? 'final_approved' : 'pending';
       }
     } else if (data.status === 'rejected') {
-      // Send rejected deals back to the front office checker queue so the
-      // originating user can fix and resubmit. We keep status='rejected'
-      // so the front-office blotter can flag the row visually.
+      // Bounce rejected deals out of every auth blotter. Status stays
+      // 'rejected' and the level returns to front_office so the create
+      // page can show Edit & Resubmit to front-office users.
       newStatus = 'rejected';
       newApprovalLevel = 'front_office';
     } else {
