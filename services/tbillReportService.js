@@ -84,7 +84,7 @@ const TBILL_SELECT_SQL = `
              t.isin_number, t.maturity_date, t.face_value, t.discount_rate_pct,
              t.days_to_maturity, t.price_per_100, t.settlement_amount,
              t.portfolio_id, t.per_day_accrual, t.accrued_interest_to_date,
-             t.counterparty, t.matured,
+             t.counterparty, t.matured, t.status, t.buy_deal_number,
              pm.portfolio_name,
              pm.portfolio_id AS portfolio_key,
              COALESCE(
@@ -111,7 +111,7 @@ async function getTbillTransactionsReport({ asAtDate, portfolio, isin, valueDate
   const range = resolveTransactionDateRange({ dateFrom, dateTo, asAtDate, valueDate });
   let sql = `${TBILL_SELECT_SQL}
       WHERE t.transaction_type IN ('Buy', 'Sell')
-        AND t.status = 'final_approved'`;
+        AND COALESCE(t.status, '') NOT IN ('cancelled', 'rejected')`;
   const params = [];
 
   if (portfolio) {
@@ -156,7 +156,8 @@ async function getTbillTransactionsReport({ asAtDate, portfolio, isin, valueDate
       price_per_100: formatPrice(row.price_per_100, 2),
       settlement_amount: formatCurrency(originalSettlement, 2),
       portfolio: resolvePortfolioDisplay(row),
-      buy_deal_number: '',
+      buy_deal_number: row.buy_deal_number || '',
+      status: row.status || '',
       remaining_face_value: '',
       per_day_accrual: formatPrice(row.per_day_accrual, 2),
       accrued_interest_to_date: formatPrice(row.accrued_interest_to_date, 2)

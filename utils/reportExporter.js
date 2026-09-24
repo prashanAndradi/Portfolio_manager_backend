@@ -110,6 +110,33 @@ const PORTFOLIO_EXPORT_COLUMNS = [
   { key: 'currency', label: 'Currency' }
 ];
 
+const PORTFOLIO_OUTSTANDING_COLUMNS = [
+  { key: 'product_type', label: 'Product' },
+  { key: 'portfolio', label: 'Portfolio' },
+  { key: 'deal_number', label: 'Deal Number' },
+  { key: 'isin', label: 'ISIN' },
+  { key: 'value_date', label: 'Value Date' },
+  { key: 'maturity_date', label: 'Maturity Date' },
+  { key: 'coupon_rate', label: 'Coupon' },
+  { key: 'yield', label: 'P.Yield' },
+  { key: 'clean_price', label: 'C.Price' },
+  { key: 'dtm', label: 'Dtm' },
+  { key: 'balance_amt', label: 'Balance' }
+];
+
+const PORTFOLIO_SUMMARY_COLUMNS = [
+  { key: 'isin', label: 'ISIN' },
+  { key: 'yield', label: 'P.Yield' },
+  { key: 'value_date', label: 'Value Date' },
+  { key: 'maturity_date', label: 'Maturity Date' },
+  { key: 'coupon_rate', label: 'Coupon' },
+  { key: 'clean_price', label: 'C.Price' },
+  { key: 'dtm', label: 'Dtm' },
+  { key: 'balance_amt', label: 'Balance' },
+  { key: 'sub_total', label: 'Sub Total' },
+  { key: 'repo_quar', label: 'Repo Quar' }
+];
+
 // Buyback AST report export columns (one row per deal)
 const BUYBACK_EXPORT_COLUMNS = [
   { key: 'portfolio', label: 'Portfolio' },
@@ -168,6 +195,22 @@ const TBILL_EXPORT_COLUMNS = [
   { key: 'per_day_accrual', label: 'Per Day Accrual' },
   { key: 'accrued_interest_to_date', label: 'Accrued Interest to Date' },
   { key: 'deal_number', label: 'Deal Number' }
+];
+
+const TBILL_TRANSACTIONS_EXPORT_COLUMNS = [
+  { key: 'deal_number', label: 'Deal Number' },
+  { key: 'transaction_type', label: 'Transaction' },
+  { key: 'portfolio', label: 'Portfolio' },
+  { key: 'counterparty', label: 'Counterparty' },
+  { key: 'isin_number', label: 'ISIN Number' },
+  { key: 'trade_date', label: 'Trade Date' },
+  { key: 'value_date', label: 'Value Date' },
+  { key: 'maturity_date', label: 'Maturity Date' },
+  { key: 'face_value', label: 'Face Value' },
+  { key: 'discount_rate_pct', label: 'Discount Rate (%)' },
+  { key: 'price_per_100', label: 'Price per 100' },
+  { key: 'settlement_amount', label: 'Settlement Amount' },
+  { key: 'status', label: 'Status' }
 ];
 
 const GSEC_TRANSACTIONS_EXPORT_COLUMNS = [
@@ -984,6 +1027,193 @@ exports.exportPortfolio = async (format, data) => {
   throw new Error('Unsupported export format');
 };
 
+function mapTabularExportRows(columns, rows, { dateKeys = [] } = {}) {
+  return (rows || []).map((row) => {
+    const mapped = { _type: row._type || 'deal' };
+    columns.forEach((col) => {
+      let val = row[col.key];
+      if (dateKeys.includes(col.key) && val) {
+        val = formatDate(val);
+      }
+      mapped[col.key] = val !== undefined && val !== null ? val : '';
+    });
+    return mapped;
+  });
+}
+
+async function exportTabularReport(format, {
+  title,
+  sheetName,
+  columns,
+  rows,
+  dateKeys = [],
+  moneyKeys = [],
+  rateKeys = []
+}) {
+  const processedData = mapTabularExportRows(columns, rows, { dateKeys });
+
+  if (format === 'csv') {
+    const parser = new Parser({
+      fields: columns.map((col) => ({ label: col.label, value: col.key }))
+    });
+    return parser.parse(processedData);
+  }
+
+  if (format === 'excel') {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(sheetName);
+    sheet.columns = columns.map((col) => ({ header: col.label, key: col.key, width: 16 }));
+
+    processedData.forEach((row) => {
+      const excelRow = { ...row };
+      moneyKeys.forEach((k) => { excelRow[k] = toExcelNumber(excelRow[k]); });
+      rateKeys.forEach((k) => { excelRow[k] = toExcelNumber(excelRow[k]); });
+      const added = sheet.addRow(excelRow);
+      const type = row._type;
+      if (type === 'section' || type === 'total' || type === 'subtotal') {
+        added.font = { bold: true };
+      }
+      if (type === 'section') added.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+      if (type === 'subtotal') added.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+      if (type === 'total') added.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+    });
+
+    moneyKeys.forEach((k) => {
+      const col = sheet.getColumn(k);
+      if (col) col.numFmt = '#,##0.00';
+    });
+    rateKeys.forEach((k) => {
+      const col = sheet.getColumn(k);
+      if (col) col.numFmt = '#,##0.0000';
+    });
+
+    return workbook.xlsx.writeBuffer();
+  }
+
+  if (format === 'pdf') {
+    const doc = new PDFDocument({ margin: 24, size: 'A4', layout: 'landscape' });
+    const buffers = [];
+    doc.on('data', buffers.push.bind(buffers));
+
+    doc.fontSize(16).font('Helvetica-Bold').text(title, { align: 'center' });
+    doc.moveDown(0.6);
+
+    const moneySet = new Set(moneyKeys);
+    const pdfColumns = columns.map((col) => ({
+      key: col.key,
+      label: col.label,
+      width: 70,
+      align: moneySet.has(col.key) || rateKeys.includes(col.key) || col.key === 'dtm' ? 'right' : 'left'
+    }));
+
+    const maxWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const totalWidth = pdfColumns.reduce((sum, col) => sum + col.width, 0);
+    if (totalWidth > maxWidth) {
+      const scale = maxWidth / totalWidth;
+      pdfColumns.forEach((col) => { col.width = Math.floor(col.width * scale); });
+    }
+
+    const rowHeight = 16;
+    const cellPadding = 3;
+    const startX = doc.page.margins.left;
+
+    function drawHeader(y) {
+      const headerWidth = pdfColumns.reduce((sum, col) => sum + col.width, 0);
+      doc.rect(startX, y, headerWidth, rowHeight).fillAndStroke('#f0f0f0', '#000000');
+      doc.fillColor('#000000').fontSize(8).font('Helvetica-Bold');
+      let x = startX;
+      pdfColumns.forEach((col) => {
+        doc.text(col.label, x + cellPadding, y + 4, {
+          width: col.width - 2 * cellPadding,
+          align: col.align
+        });
+        x += col.width;
+      });
+      return y + rowHeight;
+    }
+
+    let y = drawHeader(doc.y);
+    processedData.forEach((row) => {
+      if (y + rowHeight > doc.page.height - doc.page.margins.bottom) {
+        doc.addPage();
+        y = drawHeader(doc.page.margins.top);
+      }
+      const rowWidth = pdfColumns.reduce((sum, col) => sum + col.width, 0);
+      const type = row._type;
+      if (type === 'section') doc.rect(startX, y, rowWidth, rowHeight).fill('#f3f4f6');
+      else if (type === 'subtotal') doc.rect(startX, y, rowWidth, rowHeight).fill('#dbeafe');
+      else if (type === 'total') doc.rect(startX, y, rowWidth, rowHeight).fill('#e5e7eb');
+
+      doc.font(type === 'deal' ? 'Helvetica' : 'Helvetica-Bold').fontSize(7).fillColor('#000000');
+      let x = startX;
+      pdfColumns.forEach((col) => {
+        const text = row[col.key] !== undefined ? String(row[col.key]) : '';
+        doc.text(text, x + cellPadding, y + 4, {
+          width: col.width - 2 * cellPadding,
+          align: col.align
+        });
+        x += col.width;
+      });
+      doc.rect(startX, y, rowWidth, rowHeight).stroke('#cccccc');
+      y += rowHeight;
+    });
+
+    doc.end();
+    return await new Promise((resolve) => {
+      doc.on('end', () => resolve(Buffer.concat(buffers)));
+    });
+  }
+
+  throw new Error('Unsupported export format');
+}
+
+exports.exportPortfolioOutstanding = async (format, data, totals = {}, asAtDate = '') => {
+  const rows = [...(data || [])];
+  if (totals && totals.balance_amt) {
+    rows.push({
+      _type: 'total',
+      product_type: 'Total',
+      balance_amt: totals.balance_amt
+    });
+  }
+  const title = asAtDate
+    ? `Outstanding Holdings as at ${formatDate(asAtDate)}`
+    : 'Outstanding Holdings as at Date';
+  return exportTabularReport(format, {
+    title,
+    sheetName: 'Outstanding',
+    columns: PORTFOLIO_OUTSTANDING_COLUMNS,
+    rows,
+    dateKeys: ['value_date', 'maturity_date'],
+    moneyKeys: ['balance_amt'],
+    rateKeys: ['coupon_rate', 'yield', 'clean_price']
+  });
+};
+
+exports.exportPortfolioSummary = async (format, data, totals = {}, asAtDate = '') => {
+  const rows = [...(data || [])];
+  if (totals && (totals.sub_total || totals.isin)) {
+    rows.push({
+      _type: 'total',
+      isin: totals.isin || 'Grand Total',
+      sub_total: totals.sub_total || '',
+      repo_quar: totals.repo_quar || ''
+    });
+  }
+  const title = asAtDate
+    ? `Portfolio Summary as at ${formatDate(asAtDate)}`
+    : 'Portfolio Summary as at Date';
+  return exportTabularReport(format, {
+    title,
+    sheetName: 'Summary',
+    columns: PORTFOLIO_SUMMARY_COLUMNS,
+    rows,
+    dateKeys: ['value_date', 'maturity_date'],
+    moneyKeys: ['balance_amt', 'sub_total', 'repo_quar'],
+    rateKeys: ['coupon_rate', 'yield', 'clean_price']
+  });
+};
+
 // Buyback AST report export (Excel/CSV/PDF) – one row per deal
 exports.exportBuyback = async (format, data) => {
   const processedData = preprocessBuybackExportData(data);
@@ -1268,6 +1498,16 @@ exports.exportRepo = async (format, data) => {
 
   throw new Error('Unsupported export format');
 };
+
+exports.exportTbillTransactions = async (format, data) => exportTabularReport(format, {
+  title: 'T-Bill Transactions Report',
+  sheetName: 'T-Bill Transactions',
+  columns: TBILL_TRANSACTIONS_EXPORT_COLUMNS,
+  rows: data,
+  dateKeys: ['trade_date', 'value_date', 'maturity_date'],
+  moneyKeys: ['face_value', 'settlement_amount', 'price_per_100', 'discount_rate_pct'],
+  rateKeys: []
+});
 
 function preprocessTbillExportData(data) {
   return (data || []).map((row) => {
