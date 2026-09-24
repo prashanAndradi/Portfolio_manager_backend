@@ -121,7 +121,7 @@ async function getPortfolioMarkToMarket({ asAtDate, portfolio, isin } = {}) {
       maturity_date: maturityDate,
       face_value: round(face, 2),
       coupon: round(couponRate, 4),
-      purchased_yield: round(purchasedYield, 6),
+      purchased_yield: round(purchasedYield, 4),
       market_yield: round(marketYield, 4),
       value_at_purchased_yield: valuePurchased,
       value_at_market_yield: valueMarket,
