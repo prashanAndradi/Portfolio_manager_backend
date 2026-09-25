@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { resolveTransactionDateRange, appendValueDateRange } = require('./reportViewHelper');
 
 // Helper function to format date
 function formatDate(dateStr) {
@@ -15,8 +16,10 @@ function formatDate(dateStr) {
   }
 }
 
-exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pageSize }) => {
-  console.log(`[Counterparty Report] Called with counterparty: ${counterparty}, nicNumber: ${nicNumber}, name: ${name}`);
+exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, dateFrom, dateTo, page, pageSize }) => {
+  const range = resolveTransactionDateRange({ dateFrom, dateTo });
+  const hasDateRange = Boolean(range.from || range.to);
+  console.log(`[Counterparty Report] Called with counterparty: ${counterparty}, nicNumber: ${nicNumber}, name: ${name}, dateFrom: ${range.from || ''}, dateTo: ${range.to || ''}`);
   
   try {
     // Build WHERE conditions for each table
@@ -427,7 +430,9 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
           FROM transactions t
           WHERE t.counterparty_id IN (${dealCounterpartyIds.map(() => '?').join(',')})
         `;
-        const [transRows] = await db.query(transQuery, dealCounterpartyIds);
+        const transParams = [...dealCounterpartyIds];
+        transQuery = appendValueDateRange(transQuery, transParams, 't.value_date', range);
+        const [transRows] = await db.query(transQuery, transParams);
         allDeals = allDeals.concat(transRows);
       } catch (err) {
         console.error('[Counterparty Report] Error fetching transactions:', err);
@@ -456,7 +461,9 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
           FROM gsec g
           WHERE g.counterparty IN (${dealCounterpartyIds.map(() => '?').join(',')})
         `;
-        const [gsecRows] = await db.query(gsecQuery, dealCounterpartyIds);
+        const gsecParams = [...dealCounterpartyIds];
+        gsecQuery = appendValueDateRange(gsecQuery, gsecParams, 'g.value_date', range);
+        const [gsecRows] = await db.query(gsecQuery, gsecParams);
         allDeals = allDeals.concat(gsecRows);
       } catch (err) {
         console.error('[Counterparty Report] Error fetching gsec deals:', err);
@@ -500,6 +507,7 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
           FROM money_market_deals mmd
           WHERE ${mmConditions.join(' OR ')}
         `;
+        mmQuery = appendValueDateRange(mmQuery, mmParams, 'mmd.value_date', range);
         const [mmRows] = await db.query(mmQuery, mmParams);
         allDeals = allDeals.concat(mmRows);
       } catch (err) {
@@ -530,7 +538,9 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
           FROM buyback_deals bd
           WHERE bd.leg1_counterparty IN (${dealCounterpartyIds.map(() => '?').join(',')})
         `;
-        const [buybackRows1] = await db.query(buybackQuery1, dealCounterpartyIds);
+        const buybackParams1 = [...dealCounterpartyIds];
+        buybackQuery1 = appendValueDateRange(buybackQuery1, buybackParams1, 'bd.leg1_value_date', range);
+        const [buybackRows1] = await db.query(buybackQuery1, buybackParams1);
         allDeals = allDeals.concat(buybackRows1);
         
         // Get leg2 deals
@@ -553,7 +563,9 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
           FROM buyback_deals bd
           WHERE bd.leg2_counterparty IN (${dealCounterpartyIds.map(() => '?').join(',')})
         `;
-        const [buybackRows2] = await db.query(buybackQuery2, dealCounterpartyIds);
+        const buybackParams2 = [...dealCounterpartyIds];
+        buybackQuery2 = appendValueDateRange(buybackQuery2, buybackParams2, 'bd.leg2_value_date', range);
+        const [buybackRows2] = await db.query(buybackQuery2, buybackParams2);
         allDeals = allDeals.concat(buybackRows2);
       } catch (err) {
         console.error('[Counterparty Report] Error fetching buyback deals:', err);
@@ -587,7 +599,9 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
           FROM repo_deals rd
           WHERE rd.counterparty_id IN (${allRepoCounterpartyIds.map(() => '?').join(',')})
         `;
-        const [repoRows] = await db.query(repoQuery, allRepoCounterpartyIds);
+        const repoParams = [...allRepoCounterpartyIds];
+        repoQuery = appendValueDateRange(repoQuery, repoParams, 'rd.value_date', range);
+        const [repoRows] = await db.query(repoQuery, repoParams);
         
         // Map results to include correct counterparty_ref based on which ID array the counterparty_id belongs to
         const mappedRepoRows = repoRows.map(row => {
@@ -660,6 +674,9 @@ exports.getCounterpartyReport = async ({ counterparty, nicNumber, name, page, pa
       const deals = dealsByCounterparty[cp.unique_id] || [];
       
       if (deals.length === 0) {
+        // A date range means this is a transaction blotter: skip counterparties
+        // with no deals in the selected window.
+        if (hasDateRange) return;
         // Counterparty with no deals - still show them
         formattedResults.push({
           short_name: cp.short_name || '',
