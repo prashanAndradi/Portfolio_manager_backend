@@ -5,6 +5,7 @@ const mysql = require('mysql2/promise');
 
 const Gsec = require('../models/gsec');
 const holidayValidationService = require('../services/holidayValidationService');
+const { validateDealDatesAgainstIsinMaster } = require('../services/isinDateValidationService');
 const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
 const { resolveRequestUserId } = require('../utils/requestUser');
 const { actorCanActAtStage, requiredRolesForStage } = require('../utils/workflowStageAuth');
@@ -347,6 +348,23 @@ module.exports = {
         });
       }
 
+      // Maturity/issue date belong to the ISIN - refuse a deal carrying another
+      // bond's dates (happens when the ISIN is changed after the dates are
+      // auto-filled and they do not refresh).
+      const dateCheck = await validateDealDatesAgainstIsinMaster({
+        isin: req.body.isin || req.body.isin_number,
+        maturityDate: req.body.maturityDate || req.body.maturity_date,
+        issueDate: req.body.issueDate || req.body.issue_date
+      });
+      if (!dateCheck.ok) {
+        return res.status(400).json({
+          success: false,
+          error: 'Deal dates do not match the ISIN',
+          message: dateCheck.message,
+          expected: dateCheck.expected
+        });
+      }
+
       // Get database connection for transaction
       connection = await db.pool.getConnection();
       await connection.beginTransaction();
@@ -647,6 +665,22 @@ module.exports = {
           success: false,
           error: 'Transaction cannot be saved on a holiday',
           message: holidayValidation.message
+        });
+      }
+
+      // Same ISIN/date guard as on create, so a resubmitted deal cannot carry
+      // another bond's maturity or issue date.
+      const updateDateCheck = await validateDealDatesAgainstIsinMaster({
+        isin: updateData.isin || updateData.isin_number,
+        maturityDate: updateData.maturityDate || updateData.maturity_date,
+        issueDate: updateData.issueDate || updateData.issue_date
+      });
+      if (!updateDateCheck.ok) {
+        return res.status(400).json({
+          success: false,
+          error: 'Deal dates do not match the ISIN',
+          message: updateDateCheck.message,
+          expected: updateDateCheck.expected
         });
       }
 
