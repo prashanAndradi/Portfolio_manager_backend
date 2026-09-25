@@ -581,7 +581,7 @@ exports.export = async (format, data, summary = []) => {
     const intKeys = new Set(['dtm']);
 
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('GSec Report');
+    const sheet = workbook.addWorksheet('T Bond Report');
     sheet.columns = EXPORT_COLUMNS.map(col => ({ header: col.label, key: col.key }));
 
     const excelRows = processedData.map(row => {
@@ -657,7 +657,7 @@ exports.export = async (format, data, summary = []) => {
     doc.on('end', () => {});
 
     const titleY = doc.page.margins.top;
-    doc.fontSize(12).font('Helvetica-Bold').text('GSec Product Report', doc.page.margins.left, titleY, {
+    doc.fontSize(12).font('Helvetica-Bold').text('T Bond Product Report', doc.page.margins.left, titleY, {
       width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
       align: 'center',
       lineBreak: false
@@ -826,7 +826,7 @@ exports.exportGsecSummary = async (format, summary) => {
     doc.on('data', buffers.push.bind(buffers));
     doc.on('end', () => {});
 
-    doc.fontSize(20).font('Helvetica-Bold').text('GSec ISIN-wise Summary Report', { align: 'center' });
+    doc.fontSize(20).font('Helvetica-Bold').text('T Bond Summary Report (ISIN-wise)', { align: 'center' });
     doc.moveDown(1);
 
     const columns = [
@@ -2147,7 +2147,7 @@ exports.exportGsecTransactions = async (format, data) => {
 
   if (format === 'excel') {
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('GSec Transactions');
+    const sheet = workbook.addWorksheet('T Bond Transactions');
     sheet.columns = GSEC_TRANSACTIONS_EXPORT_COLUMNS.map((col) => ({
       header: col.label,
       key: col.key
@@ -2177,7 +2177,7 @@ exports.exportGsecTransactions = async (format, data) => {
     const buffers = [];
     doc.on('data', buffers.push.bind(buffers));
     doc.on('end', () => {});
-    doc.fontSize(16).font('Helvetica-Bold').text('GSec Transactions Report', { align: 'center' });
+    doc.fontSize(16).font('Helvetica-Bold').text('T Bond Transactions Report', { align: 'center' });
     doc.moveDown(0.5);
     const columns = GSEC_TRANSACTIONS_EXPORT_COLUMNS.map((col) => ({
       key: col.key,

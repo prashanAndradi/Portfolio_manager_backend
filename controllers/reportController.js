@@ -237,6 +237,8 @@ exports.getCounterpartyReport = async (req, res) => {
       counterparty,
       nicNumber,
       name,
+      dateFrom,
+      dateTo,
       format,
       page,
       pageSize
@@ -246,7 +248,9 @@ exports.getCounterpartyReport = async (req, res) => {
     const reportParams = {
       counterparty,
       nicNumber,
-      name
+      name,
+      dateFrom,
+      dateTo
     };
     
     // Only add pagination if provided (for regular display)
