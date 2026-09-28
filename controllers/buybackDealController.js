@@ -69,6 +69,16 @@ const isBlankNumber = (value) => {
  * @param {string} legName - label for error messages, e.g. 'Leg 1'
  * @returns {string|null} error message when invalid, otherwise null
  */
+// A buyback must name its counterparty on both legs - without it the deal can't be
+// limit-checked, confirmed or settled, so it must never be saved blank.
+const validateLegCounterparty = (leg, legName) => {
+  const value = leg && leg.counterparty;
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return `${legName}: Counterparty is required. Select a counterparty before saving the deal.`;
+  }
+  return null;
+};
+
 const validateComputedLegValues = (leg, legName) => {
   if (!leg) return `${legName} data is required`;
   for (const [field, label] of REQUIRED_POSITIVE_LEG_FIELDS) {
@@ -285,6 +295,16 @@ const buybackDealController = {
           success: false, 
           error: 'Both leg1 and leg2 data are required' 
         });
+      }
+
+      // Counterparty is compulsory on both legs.
+      const leg1CounterpartyError = validateLegCounterparty(leg1, 'Leg 1');
+      if (leg1CounterpartyError) {
+        return res.status(400).json({ success: false, error: leg1CounterpartyError });
+      }
+      const leg2CounterpartyError = validateLegCounterparty(leg2, 'Leg 2');
+      if (leg2CounterpartyError) {
+        return res.status(400).json({ success: false, error: leg2CounterpartyError });
       }
 
       // Read-only/computed values must be populated; blank values must not be saved.
@@ -607,14 +627,53 @@ const buybackDealController = {
         return res.status(404).json({ success: false, error: 'Buyback deal not found' });
       }
       const currentStatus = currentDealRows[0].deal_status;
+
+      // Did the approval side effects (leg GSec rows / ledger entries) actually land?
+      // Used twice: to let a half-finished approval be completed, and further down to
+      // skip a genuine duplicate.
+      let alreadyPosted = false;
+      if (status === 'Approved') {
+        const dealNumberForCheck = currentDealRows[0].deal_number || '';
+        let legCount = 0;
+        if (hasBuybackDealId) {
+          const [legRows] = await db.query(
+            `SELECT COUNT(*) AS cnt FROM gsec
+              WHERE buyback_deal_id = ? AND COALESCE(status, '') <> 'cancelled'`,
+            [buybackIdNum]
+          );
+          legCount = Number(legRows?.[0]?.cnt || 0);
+        }
+        let ledgerCount = 0;
+        if (dealNumberForCheck) {
+          const [ledgerRows] = await db.query(
+            'SELECT COUNT(*) AS cnt FROM ledger_entries WHERE deal_number = ? OR deal_number LIKE ?',
+            [dealNumberForCheck, `${dealNumberForCheck}/%`]
+          );
+          ledgerCount = Number(ledgerRows?.[0]?.cnt || 0);
+        }
+        alreadyPosted = legCount > 0 || ledgerCount > 0;
+      }
+
+      // A deal that is already Approved but has posted nothing is a half-finished
+      // approval, not a re-approval. Let it through so the posting can be completed;
+      // without this the deal is stranded forever (see BB20260924001).
+      const isCompletingFailedApproval =
+        currentStatus === 'Approved' && status === 'Approved' && !alreadyPosted;
+
       const allowedNextStatuses = NEXT_STATUS_BY_CURRENT[currentStatus];
-      if (!allowedNextStatuses || !allowedNextStatuses.includes(status)) {
+      if (
+        !isCompletingFailedApproval &&
+        (!allowedNextStatuses || !allowedNextStatuses.includes(status))
+      ) {
         return res.status(400).json({
           success: false,
           error: `Cannot move deal to ${status}: current status is ${currentStatus}.`
         });
       }
-      const requiredRoles = STAGE_OWNER_ROLES[currentStatus] || [];
+      // Completing a failed approval is still a final-approval action, so require the
+      // final-approval stage's roles rather than the (empty) post-Approved ones.
+      const requiredRoles =
+        STAGE_OWNER_ROLES[isCompletingFailedApproval ? 'Pending_Final_Approval' : currentStatus] || [];
       if (!actor.isAdmin && !requiredRoles.includes(actor.role)) {
         return res.status(403).json({
           success: false,
@@ -704,17 +763,16 @@ const buybackDealController = {
       let field = 'verified_by';
       let timestampField = 'verified_at';
 
-      // Idempotent final approval: skip side effects if already approved (prevents duplicate leg2 GSEC).
-      let wasAlreadyApproved = false;
-      if (status === 'Approved') {
-        const [preApproveRows] = await db.query(
-          'SELECT deal_status FROM buyback_deals WHERE id = ? LIMIT 1',
-          [id]
-        );
-        wasAlreadyApproved = preApproveRows?.[0]?.deal_status === 'Approved';
-        if (wasAlreadyApproved) {
-          console.log(`Buyback ${id} already Approved — skipping duplicate approval side effects`);
-        }
+      // Idempotent final approval: skip side effects only if they actually landed.
+      //
+      // This used to test deal_status === 'Approved'. That made a deal whose posting
+      // failed unrepairable: the status had already been written (outside the posting
+      // transaction), so every retry saw "already Approved" and skipped the side
+      // effects, leaving the deal approved forever with no legs and no ledger
+      // (see BB20260924001). Test for the side effects themselves instead - a true
+      // duplicate is still skipped, but an approved-but-unposted deal can complete.
+      if (alreadyPosted) {
+        console.log(`Buyback ${id} already posted — skipping duplicate approval side effects`);
       }
       
       if (action === 'approve' || status === 'Approved') {
@@ -742,13 +800,21 @@ const buybackDealController = {
         tierField = 'final_approved_by';
       }
 
-      const result = await BuybackDeal.updateStatus(id, status, userId, field, timestampField, tierField);
-      
-      if (result.affectedRows === 0) {
-        return res.status(404).json({
-          success: false,
-          error: 'Buyback deal not found'
-        });
+      // An approval's status write happens inside the posting transaction below, so the
+      // two commit or roll back together. Previously the status was committed here,
+      // outside that transaction - when posting then failed, the deal was left
+      // "Approved" with nothing posted. Every other status still updates here, and so
+      // does an approval whose side effects already landed (nothing left to post).
+      const isApproval = status === 'Approved';
+      if (!isApproval || alreadyPosted) {
+        const result = await BuybackDeal.updateStatus(id, status, userId, field, timestampField, tierField);
+
+        if (result.affectedRows === 0) {
+          return res.status(404).json({
+            success: false,
+            error: 'Buyback deal not found'
+          });
+        }
       }
 
       // When a buyback is rejected, cancel auto-created / letter GSec rows linked to it
@@ -805,11 +871,26 @@ const buybackDealController = {
       }
 
       // Process face value deduction when deal is approved
-      if (status === 'Approved' && !wasAlreadyApproved) {
+      if (status === 'Approved' && !alreadyPosted) {
         const connection = await db.pool.getConnection();
         try {
           await connection.beginTransaction();
           await connection.query('SELECT id FROM buyback_deals WHERE id = ? FOR UPDATE', [id]);
+
+          // Status write lives inside this transaction (see note above) so a posting
+          // failure leaves the deal un-approved and retryable rather than stranded.
+          const statusResult = await BuybackDeal.updateStatus(
+            id,
+            status,
+            userId,
+            field,
+            timestampField,
+            tierField,
+            connection
+          );
+          if (statusResult.affectedRows === 0) {
+            throw new Error('Buyback deal not found');
+          }
 
           // Get the buyback deal details (locked)
           const [buybackDeals] = await connection.query('SELECT * FROM buyback_deals WHERE id = ?', [id]);
@@ -1353,14 +1434,24 @@ const buybackDealController = {
             }
           }
           await connection.commit();
-        } catch (deductionError) {
+        } catch (approvalError) {
           try {
             await connection.rollback();
           } catch (_) {
             /* ignore */
           }
-          console.error('Error processing face value deduction for approved buyback:', deductionError);
-          // Don't fail the approval if deduction fails - log and continue
+          // This used to swallow the error and still return success, which is how
+          // BB20260924001 came to show as Approved with no legs, no ledger and no face
+          // value deduction. The whole transaction - status included - is rolled back,
+          // so report the failure instead of pretending the approval succeeded.
+          console.error('Buyback approval failed and was rolled back:', approvalError);
+          return res.status(500).json({
+            success: false,
+            error: 'Approval failed - nothing was changed',
+            message:
+              `The deal was not approved because posting failed: ${approvalError.message}. ` +
+              'The deal is unchanged and still awaiting final approval - please retry.'
+          });
         } finally {
           connection.release();
         }
@@ -1398,6 +1489,16 @@ const buybackDealController = {
           success: false,
           error: 'Both leg1 and leg2 data are required'
         });
+      }
+
+      // Counterparty is compulsory on both legs.
+      const leg1CounterpartyError = validateLegCounterparty(leg1, 'Leg 1');
+      if (leg1CounterpartyError) {
+        return res.status(400).json({ success: false, error: leg1CounterpartyError });
+      }
+      const leg2CounterpartyError = validateLegCounterparty(leg2, 'Leg 2');
+      if (leg2CounterpartyError) {
+        return res.status(400).json({ success: false, error: leg2CounterpartyError });
       }
 
       // Read-only/computed values must be populated; blank values must not be saved.

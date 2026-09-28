@@ -297,8 +297,9 @@ const BuybackDeal = {
     return rows;
   },
 
-  // Update deal status
-  updateStatus: async (id, status, userId, field = 'verified_by', timestampField = 'verified_at', tierField = null) => {
+  // Update deal status. Pass `conn` to run inside a caller's transaction so the
+  // status and the approval side effects commit or roll back together.
+  updateStatus: async (id, status, userId, field = 'verified_by', timestampField = 'verified_at', tierField = null, conn = null) => {
     if (tierField) {
       try {
         await ensureBuybackApprovalColumns();
@@ -331,7 +332,7 @@ const BuybackDeal = {
                  WHERE id = ?`;
     params.push(id);
 
-    const [result] = await db.query(sql, params);
+    const [result] = await (conn || db).query(sql, params);
     return result;
   },
 
