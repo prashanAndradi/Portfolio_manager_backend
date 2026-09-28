@@ -226,13 +226,28 @@ async function getGsecDeals(date, mode, mapOptions) {
   if (typeof Gsec.ensureColumns === 'function') {
     await Gsec.ensureColumns();
   }
-  // Sell/Buy buyback leg2 is booked as a GSec Buy (maturity). Keep those off
-  // the daily transaction blotter — they belong on maturity cashflow.
-  const buybackMaturityBuy =
-    "AND NOT (g.buyback_deal_id IS NOT NULL AND LOWER(COALESCE(g.transaction_type, '')) = 'buy')";
+  // A buyback's far leg (leg 2) is the maturity/repurchase - it belongs on maturity
+  // cashflow, not on the blotter, where only the day's actual dealing (leg 1) belongs.
+  //
+  // This used to exclude every buyback-linked GSec *Buy*, which only works for Sell/Buy
+  // buybacks. On a Buy/Sell buyback the legs are the other way round, so it hid leg 1
+  // (the real dealing) and showed leg 2 (a future leg) - exactly backwards. Match the
+  // buyback's own leg 2 transaction type instead, which is correct for both products.
+  // Verified across the book: leg 1 and leg 2 never share a transaction type.
+  const buybackFarLeg = `
+    AND NOT EXISTS (
+      SELECT 1 FROM buyback_deals bd
+       WHERE bd.id = g.buyback_deal_id
+         AND LOWER(COALESCE(g.transaction_type, '')) = LOWER(COALESCE(bd.leg2_transaction_type, ''))
+    )`;
+  // Daily Deal Blotter: drop every buyback-generated GSec leg. The buyback itself is
+  // already listed as its own BUYBACK row, and these leg rows are bookings the buyback
+  // creates (leg 1 so settlement letters work, leg 2 for the repurchase) - listing them
+  // too showed each buyback twice and double-counted the day's dealing.
+  const buybackAnyLeg = 'AND g.buyback_deal_id IS NULL';
   const where = mode === DATE_MODE.VALUE
-    ? `WHERE DATE(g.value_date) = ? ${buybackMaturityBuy}`
-    : `WHERE DATE(g.trade_date) = ? ${buybackMaturityBuy}`;
+    ? `WHERE DATE(g.value_date) = ? ${buybackFarLeg}`
+    : `WHERE DATE(g.trade_date) = ? ${buybackAnyLeg}`;
   return safeQuery('GSEC', `
     SELECT
       g.deal_number AS deal_number,
