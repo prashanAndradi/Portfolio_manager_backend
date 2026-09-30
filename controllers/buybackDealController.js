@@ -1069,7 +1069,14 @@ const buybackDealController = {
                     fundMovement: buybackDeal.fund_movement
                   };
 
-                  const gsecResult = await Gsec.create(gsecDealData);
+                  // Must run on the transaction's connection, not the pool. Gsec.create
+                  // autocommits, so when this transaction rolled back the leg 2 row
+                  // survived while the buyback_deal_id UPDATE below (which IS in the
+                  // transaction) did not - leaving an orphaned, unlinked leg 2. The
+                  // duplicate guard looks the deal up by buyback_deal_id, so the next
+                  // approval attempt could not see it and created a second leg 2
+                  // (BB20260924001: rows 20261026/GSEC/0002 and /0004).
+                  const gsecResult = await Gsec.createWithConnection(gsecDealData, connection);
                   if (hasBuybackDealId && gsecResult && gsecResult.insertId) {
                     await connection.query('UPDATE gsec SET buyback_deal_id = ? WHERE id = ?', [
                       buybackIdNum,
