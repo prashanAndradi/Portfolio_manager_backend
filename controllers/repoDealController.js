@@ -97,6 +97,33 @@ const mapRepoUpdatePayloadToColumns = (payload = {}) => {
   return normalized;
 };
 
+/**
+ * A repo is a collateralised borrowing, so the haircut is mandatory.
+ *
+ * It used to fall through `parseFloat(haircut) || 0`, so leaving the field blank saved
+ * the deal at 0% - indistinguishable from someone deliberately entering zero. Ten deals
+ * are already sitting at 0% because of that. Returns an error message, or null if valid.
+ *
+ * Upper bound: face value is derived as maturity x 100 / (100 - haircut), so 100 would
+ * divide by zero and anything above it goes negative.
+ */
+function validateHaircut(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return 'Haircut is required - a repo deal cannot be saved without a haircut percentage.';
+  }
+  const parsed = parseFloat(value);
+  if (!Number.isFinite(parsed)) {
+    return 'Haircut must be a number.';
+  }
+  if (parsed <= 0) {
+    return 'Haircut must be greater than 0% - a repo deal cannot be saved without a haircut.';
+  }
+  if (parsed >= 100) {
+    return 'Haircut must be less than 100%.';
+  }
+  return null;
+}
+
 const repoDealController = {
   // Create a new repo deal
   create: async (req, res) => {
@@ -231,6 +258,15 @@ const repoDealController = {
         return res.status(400).json({
           success: false,
           message: 'Calculation day basis must be 364 or 365'
+        });
+      }
+
+      // Haircut is mandatory for a repo deal.
+      const haircutError = validateHaircut(haircut);
+      if (haircutError) {
+        return res.status(400).json({
+          success: false,
+          message: haircutError
         });
       }
 
@@ -434,6 +470,18 @@ const repoDealController = {
           success: false,
           message: 'Cannot update matured or cancelled deals'
         });
+      }
+
+      // Only checked when the payload actually carries a haircut, so partial updates
+      // that leave it alone still work - but an edit cannot blank it out.
+      if (req.body.haircut !== undefined) {
+        const haircutError = validateHaircut(req.body.haircut);
+        if (haircutError) {
+          return res.status(400).json({
+            success: false,
+            message: haircutError
+          });
+        }
       }
 
       const existingApprovalStatus = String(existingDeal.approval_status || '').toLowerCase();
@@ -941,3 +989,5 @@ const repoDealController = {
 };
 
 module.exports = repoDealController;
+// Exported for testing - the rule is pure and worth asserting on its own.
+module.exports.validateHaircut = validateHaircut;
