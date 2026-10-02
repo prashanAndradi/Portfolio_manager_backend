@@ -19,7 +19,11 @@
 const db = require('../config/database');
 const { getSystemDay } = require('../models/systemDayModel');
 const accountMapping = require('./accountMappingService');
-const { computeGsecPerDayAccrual, resolveGsecRemainingForDailyPosting } = require('./gsecCouponPeriod');
+const {
+  computeGsecPerDayAccrual,
+  computeGsecDailyAmortization,
+  resolveGsecRemainingForDailyPosting
+} = require('./gsecCouponPeriod');
 const { buildSoldByDealMap } = require('./gsecSellDeductionService');
 
 async function resolveAccountIdByCode(accountCode) {
@@ -189,4 +193,150 @@ async function postBackdatedAccrualCatchup(transaction) {
   };
 }
 
-module.exports = { postBackdatedAccrualCatchup };
+/**
+ * Same gap as postBackdatedAccrualCatchup, but for the straight-line premium/discount
+ * amortization leg ("GSec Daily Amortization for Deal X"). EOD posts these side by
+ * side with the accrual entries, keyed the same way, so a backdated Buy with a
+ * non-par clean price has an identical missing-days problem on this leg too.
+ *
+ * Unlike accrual, the daily amortization amount is a straight-line constant for the
+ * deal's whole life (face/clean-price/value-to-maturity days), so it does not need to
+ * be recomputed per day the way the accrual's coupon-period E does - only the
+ * remaining face (sold/pending-sold) can change it day to day.
+ */
+async function postBackdatedAmortizationCatchup(transaction) {
+  if (!transaction || transaction.transaction_type !== 'Buy') {
+    return { skipped: true, reason: 'not a Buy deal' };
+  }
+
+  const systemDayRow = await getSystemDay();
+  const systemDay = systemDayRow && systemDayRow.system_date;
+  const valueDate = ymdDateOnly(transaction.value_date);
+  const today = ymdDateOnly(systemDay);
+  if (!valueDate || !today) {
+    return { skipped: true, reason: 'missing value_date or system day' };
+  }
+  if (valueDate >= today) {
+    return { skipped: true, reason: 'not backdated' };
+  }
+
+  const maturityDate = ymdDateOnly(transaction.maturity_date);
+  if (maturityDate && maturityDate <= valueDate) {
+    return { skipped: true, reason: 'already matured at value date' };
+  }
+
+  const dealNumber = String(transaction.deal_number || '').trim();
+  if (!dealNumber) {
+    return { skipped: true, reason: 'missing deal_number' };
+  }
+
+  const clean = Number(transaction.clean_price);
+  if (!Number.isFinite(clean) || Math.abs(clean - 100) < 1e-6) {
+    // Par bond, or no clean_price on the deal row - nothing to amortize, same as EOD.
+    return { skipped: true, reason: 'par bond or missing clean_price' };
+  }
+
+  let amortTradingAccountId;
+  let amortFaAccountId;
+  try {
+    const [amortTradingCode, amortFaCode] = await Promise.all([
+      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.GSEC_AMORTISATION_TRADING),
+      accountMapping.getAccountCode(accountMapping.MAPPING_KEYS.GSEC_FINANCIAL_ASSETS_AMORTISED_COST)
+    ]);
+    [amortTradingAccountId, amortFaAccountId] = await Promise.all([
+      resolveAccountIdByCode(amortTradingCode),
+      resolveAccountIdByCode(amortFaCode)
+    ]);
+  } catch (mapErr) {
+    console.error('Backdated amortization catch-up: GSec amortization account mapping unavailable, skipping:', mapErr.message);
+    return { skipped: true, reason: 'account mapping unavailable' };
+  }
+
+  let hasPerDayAmortizationColumn = false;
+  try {
+    const [colRows] = await db.query(
+      `SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'gsec' AND COLUMN_NAME = 'per_day_amortization'
+       LIMIT 1`
+    );
+    hasPerDayAmortizationColumn = Array.isArray(colRows) && colRows.length > 0;
+  } catch (_) { /* leave false */ }
+
+  const lastDay = maturityDate && maturityDate < today ? maturityDate : today;
+  const days = enumerateDays(valueDate, lastDay).filter((d) => !maturityDate || d < maturityDate);
+  if (!days.length) {
+    return { skipped: true, reason: 'no catch-up days in range' };
+  }
+
+  const description = `GSec Daily Amortization for Deal ${dealNumber}`;
+  const [alreadyPostedRows] = await db.query(
+    `SELECT DISTINCT DATE(entry_date) AS d FROM ledger_entries WHERE deal_number = ? AND description = ?`,
+    [dealNumber, description]
+  );
+  const alreadyPosted = new Set((alreadyPostedRows || []).map((r) => ymdDateOnly(r.d)));
+
+  let posted = 0;
+  let skippedAlreadyPosted = 0;
+  let lastDailyAmount = null;
+
+  for (const day of days) {
+    const [soldByDealForDay, soldByDealEver] = await Promise.all([
+      buildSoldByDealMap(db, [dealNumber], day),
+      buildSoldByDealMap(db, [dealNumber], null)
+    ]);
+    const linkedSoldForDay = Number(soldByDealForDay[dealNumber] || 0);
+    const pendingSoldForDay = Math.max(0, Number(soldByDealEver[dealNumber] || 0) - linkedSoldForDay);
+    const dealWithSold = Object.assign({}, transaction, { linked_sold_face_value: linkedSoldForDay });
+    const effectiveRemaining = resolveGsecRemainingForDailyPosting(dealWithSold, {
+      linked_buyback_face_value: 0,
+      pending_buyback_face_value: 0,
+      pending_sold_face_value: pendingSoldForDay
+    });
+    if (effectiveRemaining <= 0) {
+      continue;
+    }
+    const dealForAmort = Object.assign({}, dealWithSold, { remaining_face_value: effectiveRemaining });
+    const computed = computeGsecDailyAmortization(dealForAmort, day);
+    if (!computed.ok) {
+      console.warn('Backdated amortization catch-up: skipping day', day, 'for', dealNumber, computed.reason);
+      continue;
+    }
+    const { dailyAmount, scenario } = computed;
+    lastDailyAmount = dailyAmount;
+
+    if (alreadyPosted.has(day)) {
+      skippedAlreadyPosted++;
+      continue;
+    }
+
+    const drId = scenario === 'premium' ? amortTradingAccountId : amortFaAccountId;
+    const crId = scenario === 'premium' ? amortFaAccountId : amortTradingAccountId;
+    await db.query(
+      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
+       VALUES (?, ?, ?, 0, ?, ?, ?)`,
+      [day, drId, dailyAmount, dealNumber, description, 'LKR']
+    );
+    await db.query(
+      `INSERT INTO ledger_entries (entry_date, account_id, debit_amount, credit_amount, deal_number, description, currency)
+       VALUES (?, ?, 0, ?, ?, ?, ?)`,
+      [day, crId, dailyAmount, dealNumber, description, 'LKR']
+    );
+    posted++;
+  }
+
+  if (hasPerDayAmortizationColumn && lastDailyAmount != null) {
+    await db.query('UPDATE gsec SET per_day_amortization = ? WHERE id = ?', [lastDailyAmount, transaction.id]);
+  }
+
+  return {
+    skipped: false,
+    deal_number: dealNumber,
+    value_date: valueDate,
+    system_day: today,
+    days_in_range: days.length,
+    posted,
+    skipped_already_posted: skippedAlreadyPosted
+  };
+}
+
+module.exports = { postBackdatedAccrualCatchup, postBackdatedAmortizationCatchup };
