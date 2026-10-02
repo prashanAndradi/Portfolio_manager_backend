@@ -6,7 +6,7 @@ const {
   resolveIsinCouponDates,
   computeGsecPerDayAccrual
 } = require('./gsecCouponPeriod');
-const { buildSoldByDealMap } = require('./gsecSellDeductionService');
+const { buildSoldByDealMap, allocateUnlinkedSellFIFO, findDealsWithAnyProperSellLink } = require('./gsecSellDeductionService');
 const { isTransactionsView, resolveTransactionDateRange, pushValueDateRange } = require('./reportViewHelper');
 
 // Helper to truncate to 4 decimals
@@ -281,6 +281,12 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
     console.log(`[GSEC Report] Sell reductions as at ${asAtDate}:`, soldByDeal);
   }
 
+  // Deals with a real Sell link already on record anywhere (any date) must never be used
+  // to guess-absorb a DIFFERENT, unrelated unlinked sell below - their fate is already
+  // known, even if that Sell's own date falls after the current as-at date (e.g. a Buy
+  // placed with a backdated value_date and sold the next day via a properly-linked Sell).
+  const dealsWithKnownLink = await findDealsWithAnyProperSellLink(db, dealNumbers);
+
   // Fallback: allocate "unlinked" sells (missing/invalid buy_deal_number) using FIFO per ISIN/portfolio.
   // This makes the report resilient when sell rows do not correctly reference a buy deal_number.
   // Primary linkage remains buy_deal_number; fallback is only for sells not linked to any buy in `rows`.
@@ -313,7 +319,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
       const buyDealsByKey = {};
       rows.forEach(b => {
         const dealNo = (b.deal_number || '').trim();
-        if (!dealNo || !b.isin) return;
+        if (!dealNo || !b.isin || dealsWithKnownLink.has(dealNo)) return;
         const key = `${String(b.portfolio || '').trim()}|${String(b.isin).trim()}`;
         if (!buyDealsByKey[key]) buyDealsByKey[key] = [];
         buyDealsByKey[key].push({
@@ -343,18 +349,7 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
         const fifoBuys = buyDealsByKey[sellKey];
         if (!fifoBuys || !fifoBuys.length) continue;
 
-        let remainingToAllocate = Number(s.face_value) || 0;
-        if (remainingToAllocate <= 0) continue;
-
-        for (const b of fifoBuys) {
-          if (remainingToAllocate <= 0) break;
-          const alreadySold = Number(soldByDeal[b.deal_number] || 0);
-          const maxSellable = Math.max(0, (Number(b.face_value) || 0) - alreadySold);
-          if (maxSellable <= 0) continue;
-          const alloc = Math.min(maxSellable, remainingToAllocate);
-          soldByDeal[b.deal_number] = alreadySold + alloc;
-          remainingToAllocate -= alloc;
-        }
+        allocateUnlinkedSellFIFO(fifoBuys, s.face_value, soldByDeal);
       }
     }
   }
@@ -933,9 +928,13 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
         if (asAtDate) buyMetaParams.push(asAtDate);
 
         const [buyMetaRows] = await db.query(buyMetaSql, buyMetaParams);
+        // Same exclusion as the main table above: a Buy deal with a real Sell link on
+        // record anywhere must not be guessed into absorbing a different unlinked sell.
+        const buyMetaDealNumbers = buyMetaRows.map(b => (b.deal_number || '').trim()).filter(Boolean);
+        const dealsWithKnownLinkForBalance = await findDealsWithAnyProperSellLink(db, buyMetaDealNumbers);
         buyMetaRows.forEach(b => {
           const dealNo = (b.deal_number || '').trim();
-          if (!dealNo || !b.isin) return;
+          if (!dealNo || !b.isin || dealsWithKnownLinkForBalance.has(dealNo)) return;
           const key = `${String(b.portfolio || '').trim()}|${String(b.isin).trim()}`;
           if (!buyDealsByKey[key]) buyDealsByKey[key] = [];
           buyDealsByKey[key].push({
@@ -955,22 +954,11 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
           const fifoBuys = buyDealsByKey[sellKey];
           if (!fifoBuys || !fifoBuys.length) continue;
 
-          let remainingToAllocate = Number(s.face_value) || 0;
-          if (remainingToAllocate <= 0) continue;
-
-          for (const b of fifoBuys) {
-            if (remainingToAllocate <= 0) break;
-            const alreadySold = Number(soldByDeal[b.deal_number] || 0);
-            const maxSellable = Math.max(0, (Number(b.face_value) || 0) - alreadySold);
-            if (maxSellable <= 0) continue;
-            const alloc = Math.min(maxSellable, remainingToAllocate);
-            soldByDeal[b.deal_number] = alreadySold + alloc;
-            remainingToAllocate -= alloc;
-          }
+          allocateUnlinkedSellFIFO(fifoBuys, s.face_value, soldByDeal);
         }
       }
     }
-    
+
     // Always calculate buyback deductions (not just for historical dates)
     const buybackByDeal = {};
     if (dealNumbers.length) {

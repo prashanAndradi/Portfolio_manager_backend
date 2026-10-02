@@ -1476,6 +1476,34 @@ const Gsec = {
                 if (!ledgerResult.success) {
                   console.error('Failed to post GSec compound ledger entry:', ledgerResult.error);
                 }
+                // Backdated Buy (value_date already behind the system day): EOD can
+                // only ever post *today's* accrual going forward, so the days between
+                // value_date and today - which EOD already ran past before this deal
+                // existed - would otherwise be a permanent accrual gap. Catch them up
+                // once, right here, after final auth.
+                try {
+                  const {
+                    postBackdatedAccrualCatchup,
+                    postBackdatedAmortizationCatchup
+                  } = require('../services/gsecBackdatedAccrualCatchupService');
+                  const catchupResult = await postBackdatedAccrualCatchup(transaction);
+                  if (!catchupResult.skipped) {
+                    console.log(
+                      `Backdated GSec accrual catch-up for ${transaction.deal_number}: posted ${catchupResult.posted} day(s), ` +
+                      `skipped ${catchupResult.skipped_already_posted} already-posted day(s) (value_date=${catchupResult.value_date}, system_day=${catchupResult.system_day}).`
+                    );
+                  }
+                  const amortCatchupResult = await postBackdatedAmortizationCatchup(transaction);
+                  if (!amortCatchupResult.skipped) {
+                    console.log(
+                      `Backdated GSec amortization catch-up for ${transaction.deal_number}: posted ${amortCatchupResult.posted} day(s), ` +
+                      `skipped ${amortCatchupResult.skipped_already_posted} already-posted day(s) (value_date=${amortCatchupResult.value_date}, system_day=${amortCatchupResult.system_day}).`
+                    );
+                  }
+                } catch (catchupErr) {
+                  console.error('Failed to post backdated GSec accrual/amortization catch-up:', catchupErr);
+                  // Don't throw - the deal's own approval/ledger posting already succeeded.
+                }
                 return result;
               }
               if (transaction.transaction_type === 'Sell') {
