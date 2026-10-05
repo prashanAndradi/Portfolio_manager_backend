@@ -2,17 +2,83 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const auth = require('../middlewares/auth');
+const { getSystemDay } = require('../models/systemDayModel');
 
 /** Resolve pseudo chart rows (e.g. GSEC_ACCRUAL_INCOME_, GSEC_ACCRUAL_ASSET_C) via account_mappings. */
-const LEDGER_ACCOUNT_MAPPING_JOIN = `
-      LEFT JOIN account_mappings am ON am.is_active = TRUE
-        AND (
-          am.mapping_key = coa.account_code
-          OR am.mapping_key = TRIM(TRAILING '_' FROM coa.account_code)
-          OR coa.account_code REGEXP CONCAT('^', am.mapping_key, '_.*$')
-        )
-      LEFT JOIN chart_of_accounts coa_resolved
-        ON coa_resolved.account_code = am.account_code AND coa_resolved.is_active = TRUE`;
+/**
+ * Replaces the SQL join that used to resolve these rows. That join matched on
+ * TRIM(column) and a REGEXP assembled per row pair, so nothing could use an index and
+ * MySQL evaluated it for every ledger row x active mapping - about 2.5 million regex
+ * comparisons per request, twice over (count + page). It measured 18.2s and 17.4s on
+ * production data, which is what made the hosted General Ledger return 503.
+ *
+ * There are only ~27 active mappings and ~145 chart rows, so the whole thing is read
+ * once and resolved in memory instead. Cached briefly because it changes rarely and is
+ * read on every ledger page.
+ */
+const LEDGER_ACCOUNT_MAP_TTL_MS = 60000;
+let ledgerAccountMapCache = { value: null, at: 0 };
+
+async function getLedgerAccountMap() {
+  const now = Date.now();
+  if (ledgerAccountMapCache.value && now - ledgerAccountMapCache.at < LEDGER_ACCOUNT_MAP_TTL_MS) {
+    return ledgerAccountMapCache.value;
+  }
+  const [[mappings], [accounts]] = await Promise.all([
+    db.query('SELECT mapping_key, account_code FROM account_mappings WHERE is_active = TRUE'),
+    db.query('SELECT account_code, name FROM chart_of_accounts WHERE is_active = TRUE')
+  ]);
+  const byCode = new Map();
+  accounts.forEach((a) => byCode.set(a.account_code, a));
+  const value = { mappings, byCode };
+  ledgerAccountMapCache = { value, at: now };
+  return value;
+}
+
+/**
+ * Mirrors the old join's three match rules, in the same order of preference:
+ * exact key, key without a trailing underscore, then key as a `<key>_...` prefix.
+ * Returns null when nothing maps, so the caller keeps the original chart account.
+ */
+function resolveMappedAccount(accountCode, accountMap) {
+  if (!accountCode || !accountMap) return null;
+  const code = String(accountCode);
+  const trimmed = code.replace(/_+$/, '');
+
+  const match =
+    accountMap.mappings.find((m) => m.mapping_key === code) ||
+    accountMap.mappings.find((m) => m.mapping_key === trimmed) ||
+    accountMap.mappings.find((m) => m.mapping_key && code.startsWith(`${m.mapping_key}_`));
+  if (!match) return null;
+
+  return accountMap.byCode.get(match.account_code) || null;
+}
+
+/**
+ * Last 30 days (inclusive) when the caller gives neither bound, anchored on the app's
+ * system day rather than the server clock so it matches the date shown in the UI.
+ * An explicit start or end is always honoured as given.
+ */
+async function resolveLedgerDateRange(startDate, endDate) {
+  if (startDate || endDate) {
+    return { startDate: startDate || null, endDate: endDate || null, defaulted: false };
+  }
+  let anchor = new Date();
+  try {
+    const row = await getSystemDay();
+    const systemDay = row && row.system_date;
+    if (systemDay) {
+      const parsed = new Date(systemDay);
+      if (!isNaN(parsed.getTime())) anchor = parsed;
+    }
+  } catch (err) {
+    console.warn('General ledger: falling back to server date for the default range:', err.message);
+  }
+  const ymd = (d) => d.toISOString().slice(0, 10);
+  const from = new Date(anchor.getTime());
+  from.setDate(from.getDate() - 29); // 30 days inclusive of the anchor day
+  return { startDate: ymd(from), endDate: ymd(anchor), defaulted: true };
+}
 
 // Get all account types
 router.get('/account-types', auth, async (req, res) => {
@@ -198,72 +264,82 @@ router.get('/general-ledger', auth, async (req, res) => {
       offset = 0
     } = req.query;
     
-    // When ledger points at a chart row whose account_code is an account_mappings key
-    // (e.g. GSEC_ACCRUAL_INCOME_, GSEC_ACCRUAL_ASSET_C), show the mapped numeric code and name.
-    let query = `
-      SELECT le.*, 
-             COALESCE(coa_resolved.account_code, coa.account_code) AS account_code,
-             COALESCE(coa_resolved.name, coa.name) AS account_name,
-             at.category as account_category,
-             t.transaction_code, t.description as transaction_description
-      FROM ledger_entries le
-      LEFT JOIN chart_of_accounts coa ON le.account_id = coa.id
-      ${LEDGER_ACCOUNT_MAPPING_JOIN}
-      LEFT JOIN account_types at ON coa.account_type_id = at.id
-      LEFT JOIN transactions t ON le.transaction_id = t.id
-      WHERE 1=1
-    `;
-    
+    // Default to the last 30 days when no range is given. Unfiltered, this reads the
+    // whole ledger (94k rows and growing ~4.4k a month), which is what made the hosted
+    // page time out; a bounded range also lets idx_entry_date do the work.
+    const { startDate: rangeStart, endDate: rangeEnd, defaulted } =
+      await resolveLedgerDateRange(startDate, endDate);
+
     const params = [];
-    
-    // Add count query for pagination
-    const countQuery = `
-      SELECT COUNT(*) as total 
-      FROM ledger_entries le
-      LEFT JOIN chart_of_accounts coa ON le.account_id = coa.id
-      ${LEDGER_ACCOUNT_MAPPING_JOIN}
-      LEFT JOIN account_types at ON coa.account_type_id = at.id
-      LEFT JOIN transactions t ON le.transaction_id = t.id
-      WHERE 1=1
-    `;
-    
-    // Build the WHERE clause for both queries
     let whereClause = '';
-    
-    if (startDate) {
+
+    if (rangeStart) {
       whereClause += ` AND le.entry_date >= ?`;
-      params.push(startDate);
+      params.push(rangeStart);
     }
-    
-    if (endDate) {
+
+    if (rangeEnd) {
       whereClause += ` AND le.entry_date <= ?`;
-      params.push(endDate);
+      params.push(rangeEnd);
     }
-    
+
     if (accountId) {
       whereClause += ` AND le.account_id = ?`;
       params.push(accountId);
     }
-    
+
     if (transactionId) {
       whereClause += ` AND le.transaction_id = ?`;
       params.push(transactionId);
     }
-    
-    // Execute count query
-    const [countResult] = await db.query(countQuery + whereClause, params);
-    const total = countResult[0].total;
-    
-    // Add sorting and pagination to the main query
+
+    // Count off ledger_entries alone. Every filter above is a column on that table, so
+    // the joins were only ever decorating rows that COUNT(*) discards - and dragging the
+    // account_mappings join through them cost ~18s on its own.
+    const countQuery = `SELECT COUNT(*) as total FROM ledger_entries le WHERE 1=1`;
+
+    // The account_mappings resolution is done in JS below rather than as a join: its
+    // conditions (TRIM on a column, a REGEXP built per row pair) cannot use an index, so
+    // MySQL evaluated them for every ledger row x mapping combination.
+    const query = `
+      SELECT le.*,
+             coa.account_code AS account_code,
+             coa.name AS account_name,
+             at.category as account_category,
+             t.transaction_code, t.description as transaction_description
+      FROM ledger_entries le
+      LEFT JOIN chart_of_accounts coa ON le.account_id = coa.id
+      LEFT JOIN account_types at ON coa.account_type_id = at.id
+      LEFT JOIN transactions t ON le.transaction_id = t.id
+      WHERE 1=1
+    `;
+
     const fullQuery = query + whereClause + ` ORDER BY le.entry_date DESC, le.id DESC LIMIT ? OFFSET ?`;
     const paginationParams = [...params, parseInt(limit), parseInt(offset)];
-    
-    const [entries] = await db.query(fullQuery, paginationParams);
-    
+
+    const [[countResult], [rawEntries], accountMap] = await Promise.all([
+      db.query(countQuery + whereClause, params),
+      db.query(fullQuery, paginationParams),
+      getLedgerAccountMap()
+    ]);
+    const total = countResult[0].total;
+
+    const entries = rawEntries.map((row) => {
+      const resolved = resolveMappedAccount(row.account_code, accountMap);
+      return resolved
+        ? { ...row, account_code: resolved.account_code, account_name: resolved.name }
+        : row;
+    });
+
     res.json({
       total,
       limit: parseInt(limit),
       offset: parseInt(offset),
+      // Tells the UI a range was applied for it, so "no entries" is not mistaken for an
+      // empty ledger.
+      startDate: rangeStart,
+      endDate: rangeEnd,
+      dateRangeDefaulted: defaulted,
       entries
     });
   } catch (error) {
