@@ -584,16 +584,9 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
   // These fallback GLs only apply if a mapping lookup fails. They must match
   // account_mappings, or a failed lookup would silently post to a retired GL
   // (updated for the 2026-09-11 GL mapping change).
-  const couponIncomeAccount =
-    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_COUPON_INCOME)) ||
-    '358-101-130-404-44';
   const capitalGainLossAccount =
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_CAPITAL_GAIN_LOSS)) ||
     '358-101-130-398-44';
-  const accruedIncomeAccount =
-    options.accruedIncomeAccountOverride ||
-    (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUAL_INCOME)) ||
-    '358-101-130-404-44';
   const accruedReceivableAccount =
     options.accruedReceivableAccountOverride ||
     (await accountMapping.getAccountCodeOptional(accountMapping.MAPPING_KEYS.GSEC_ACCRUAL_ASSET)) ||
@@ -626,9 +619,10 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
       mainDr.push({ account_code: amortAccount, amount: Math.abs(amortToSell), description: mainDescription });
     }
   }
-  // CR holding-period Coupon Interest Income (only the part EARNED while we held the bond).
+  // CR Interest Receivable Coupon (116) for the interest EARNED while we held the bond. It was
+  // accrued daily into 116, so the sale closes it directly - no income line and no reversal pair.
   if (holdingCouponIncome > 0) {
-    mainCr.push({ account_code: couponIncomeAccount, amount: holdingCouponIncome, description: mainDescription });
+    mainCr.push({ account_code: accruedReceivableAccount, amount: holdingCouponIncome, description: mainDescription });
   }
   // Capital Gain (CR) or Loss (DR) - clean-to-clean P&L vs carrying value.
   if (Number.isFinite(capitalGl) && Math.abs(capitalGl) > 0.00000001) {
@@ -668,19 +662,6 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
     }
   }
 
-  const reversalDescription = `${prefix}GSec Sale - Accrued Interest Reversal - ${transaction.deal_number}`;
-  // Reversal pair carries HOLDING-PERIOD coupon income only - what we accrued daily into
-  // 568/570 while holding the bond. Buy-side accrued (paid at purchase) is reversed
-  // separately via account 458 in the main entry above.
-  const reversalDr =
-    holdingCouponIncome > 0
-      ? [{ account_code: accruedIncomeAccount, amount: holdingCouponIncome, description: reversalDescription }]
-      : [];
-  const reversalCr =
-    holdingCouponIncome > 0
-      ? [{ account_code: accruedReceivableAccount, amount: holdingCouponIncome, description: reversalDescription }]
-      : [];
-
   // Preview mode: return the fully-computed journal without posting anything.
   if (options.dryRun) {
     return {
@@ -689,10 +670,7 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
       date: sellDate,
       deal_id: dealId,
       main: { dr_lines: mainDrClean, cr_lines: mainCrClean, description: mainDescription },
-      reversal:
-        reversalDr.length && reversalCr.length
-          ? { dr_lines: reversalDr, cr_lines: reversalCr, description: reversalDescription }
-          : null,
+      reversal: null,
       computed: {
         sellFace,
         buyFace,
@@ -732,20 +710,6 @@ async function postFinalApprovedSellLedger(transaction, options = {}) {
   if (!mainResult.success) {
     console.error('Failed to post GSec sell multi-line entry:', mainResult.error);
     return { success: false, error: mainResult.error };
-  }
-
-  if (reversalDr.length && reversalCr.length) {
-    const revResult = await postMulti({
-      date: sellDate,
-      dr_accounts: reversalDr,
-      cr_accounts: reversalCr,
-      deal_id: dealId,
-      description: reversalDescription
-    });
-    if (!revResult.success) {
-      // Match gsec.updateStatus: log but do not fail the overall approval path after main leg posted.
-      console.error('Failed to post GSec sell accrued reversal entry:', revResult.error);
-    }
   }
 
   await postGsecBrokerageIfAny(transaction, options);
