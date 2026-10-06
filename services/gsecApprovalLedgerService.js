@@ -45,14 +45,12 @@ function isSaneCleanPer100(v) {
 
 /**
  * Annual coupon rate (percent, e.g. 10 for 10%) for effective-yield carry pricing.
- * Prefers buy.accrued_interest_calculation × 2; falls back to isin_master.coupon_rate.
+ * Prefers isin_master.coupon_rate; falls back to buy.accrued_interest_calculation × 2.
  */
 async function resolveAnnualCouponRatePercent(buyDeal) {
-  const semi = Number(buyDeal.accrued_interest_calculation);
-  if (isSaneAccruedPer100(semi)) {
-    const annual = semi * 2;
-    if (annual > 0 && annual <= 100) return annual;
-  }
+  // isin_master is the source of truth. A buy deal's accrued_interest_calculation is not always
+  // half the coupon (on some deals it holds the accrued interest at purchase), so doubling it
+  // gives a wrong rate and a wildly wrong carrying price and amortisation.
   const isin = buyDeal.isin_number || buyDeal.isin;
   if (isin) {
     const [rows] = await db.query(
@@ -61,6 +59,11 @@ async function resolveAnnualCouponRatePercent(buyDeal) {
     );
     const cr = Number(rows?.[0]?.coupon_rate);
     if (Number.isFinite(cr) && cr > 0 && cr <= 100) return cr;
+  }
+  const semi = Number(buyDeal.accrued_interest_calculation);
+  if (isSaneAccruedPer100(semi)) {
+    const annual = semi * 2;
+    if (annual > 0 && annual <= 100) return annual;
   }
   return null;
 }
