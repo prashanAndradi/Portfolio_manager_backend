@@ -1119,10 +1119,18 @@ const Gsec = {
       data.dirty_price = parseFloat(data.clean_price) + parseFloat(data.accrued_interest);
     }
     
+    // The edit/resubmit form sends the counterparty as `counterparty` (prefix-coded, e.g. 'c27'),
+    // but the DB column is counterparty_id. Without this mapping the column is not in the
+    // whitelist below, so a changed counterparty was silently dropped and the deal kept the old one.
+    if (data.counterparty !== undefined && data.counterparty !== null && String(data.counterparty).trim() !== '') {
+      data.counterparty_id = String(data.counterparty).trim();
+    }
+    delete data.counterparty;
+
     // Generate SET clause for SQL
     const setClauses = [];
     const values = [];
-    
+
     // Whitelist of valid database columns in gsec table (based on actual schema)
     const validColumns = [
       'trade_type', 'transaction_type', 'counterparty_id', 'deal_number', 'buy_deal_number', 'isin_number', 'face_value',
