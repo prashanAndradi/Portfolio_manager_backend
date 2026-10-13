@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const { getSystemDay } = require('../models/systemDayModel');
+const { getQuotesAsAt } = require('../services/mtmQuoteLookupService');
 
 function ymd(value) {
   if (!value) return '';
@@ -136,7 +137,31 @@ router.get('/', async (req, res) => {
     }
     mtmSql += ' ORDER BY mtm.instrument_type, mtm.series, mtm.isin_number';
 
-    const [mtmRows] = await db.query(mtmSql, mtmParams);
+    const [snapshotRows] = await db.query(mtmSql, mtmParams);
+
+    // The table holds only the latest quote per ISIN. For the as-at date use the quote in force
+    // on that date (latest on or before it); an ISIN with none is shown unpriced, not at today's quote.
+    const asAtQuotes = await getQuotesAsAt(snapshotRows.map((r) => r.isin), effectiveAsAt);
+    const mtmRows = [];
+    snapshotRows.forEach((row) => {
+      const q = asAtQuotes[String(row.isin || '').trim()];
+      if (!q) return; // falls through to the unpriced placeholder below
+      mtmRows.push({
+        ...row,
+        series: q.series || row.series,
+        instrument_type: q.instrument_type || row.instrument_type,
+        quote_source: q.quote_source || row.quote_source,
+        buying_price: q.buying_price,
+        selling_price: q.selling_price,
+        average_price: q.average_price,
+        buying_yield: q.buying_yield,
+        selling_yield: q.selling_yield,
+        average_yield: q.average_yield,
+        dirty_price: q.dirty_price,
+        last_updated: q.quote_date,
+        excel_source: q.excel_source
+      });
+    });
 
     const holdingWhere = [
       `(status IS NULL OR status NOT IN ('rejected', 'cancelled'))`,
@@ -217,7 +242,10 @@ router.get('/', async (req, res) => {
     });
 
     // SA-09: holdings with no MTM row still appear, marked unpriced.
-    const missingIsins = Object.keys(holdingsByIsin).filter((key) => !rowByIsin[key]);
+    const missingIsins = [...new Set([
+      ...Object.keys(holdingsByIsin),
+      ...snapshotRows.map((r) => String(r.isin || '').trim())
+    ])].filter((key) => key && !rowByIsin[key]);
     if (missingIsins.length) {
       const placeholders = missingIsins.map(() => '?').join(',');
       const [masterRows] = await db.query(
@@ -262,7 +290,8 @@ router.get('/', async (req, res) => {
       const wap = holding.sumFV > 0 ? holding.sumFVCP / holding.sumFV : 0;
       const markToMarketPrice = Number(item.average_price) || 0;
       const balance = Number(holding.balance) || 0;
-      const hasPrice = Number.isFinite(Number(item.average_price));
+      const hasPrice = item.average_price !== null && item.average_price !== undefined && item.average_price !== ''
+        && Number.isFinite(Number(item.average_price));
       const unrealizedGain = hasPrice ? ((markToMarketPrice - wap) * balance) / 100 : 0;
 
       return {
