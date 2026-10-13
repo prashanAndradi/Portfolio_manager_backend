@@ -2241,10 +2241,12 @@ exports.getMimeType = (format) => {
  */
 const PORTFOLIO_MTM_COLUMNS = [
   { key: 'maturity_date', label: 'Maturity', width: 14 },
+  { key: 'value_date', label: 'Value Date', width: 14 },
   { key: 'face_value', label: 'Face Value Rs.', width: 20 },
   { key: 'coupon', label: 'Coupon', width: 11 },
   { key: 'purchased_yield', label: 'Purchased Yield', width: 15 },
   { key: 'market_yield', label: 'Market Yield', width: 13 },
+  { key: 'quote_date', label: 'Quote Date', width: 14 },
   { key: 'value_at_purchased_yield', label: 'Value as at Purchased Yield', width: 26 },
   { key: 'value_at_market_yield', label: 'Value as at Market Yield', width: 24 },
   { key: 'profit_loss', label: 'Profit (Loss) Rs.', width: 20 }
@@ -2274,7 +2276,7 @@ exports.exportPortfolioMarkToMarket = async (format, payload) => {
       '',
       body,
       '',
-      'GSEC Portfolio,' + (totals.face_value == null ? '' : totals.face_value) + ',,,,,,' + (totals.profit_loss == null ? '' : totals.profit_loss)
+      'GSEC Portfolio,,' + (totals.face_value == null ? '' : totals.face_value) + ',,,,,,,' + (totals.profit_loss == null ? '' : totals.profit_loss)
     ].join('\n');
   }
 
@@ -2296,29 +2298,32 @@ exports.exportPortfolioMarkToMarket = async (format, payload) => {
       for (const r of group.rows) {
         const line = sheet.addRow([
           r.maturity_date,
+          r.value_date || '',
           toExcelNumber(r.face_value),
           pct(r.coupon),
           pct(r.purchased_yield),
           pct(r.market_yield),
+          r.quote_date || '',
           r.value_at_purchased_yield === null || r.value_at_purchased_yield === undefined ? '' : Number(r.value_at_purchased_yield),
           r.value_at_market_yield === null || r.value_at_market_yield === undefined ? '' : Number(r.value_at_market_yield),
           toExcelNumber(r.profit_loss)
         ]);
-        line.getCell(2).numFmt = '#,##0.00';
-        for (const c of [3, 4, 5]) line.getCell(c).numFmt = '0.0000%';
-        for (const c of [6, 7]) line.getCell(c).numFmt = '#,##0.000000';
-        line.getCell(8).numFmt = '#,##0.00;[Red](#,##0.00)';
+        line.getCell(3).numFmt = '#,##0.00';
+        for (const c of [4, 5, 6]) line.getCell(c).numFmt = '0.0000%';
+        for (const c of [8, 9]) line.getCell(c).numFmt = '#,##0.000000';
+        line.getCell(10).numFmt = '#,##0.00;[Red](#,##0.00)';
         rowsAdded++;
       }
       sheet.addRow([]);
     }
 
-    const totalRow = sheet.addRow(['GSEC Portfolio', toExcelNumber(totals.face_value), '', '', '', '', '', toExcelNumber(totals.profit_loss)]);
+    const totalRow = sheet.addRow(['GSEC Portfolio', '', toExcelNumber(totals.face_value), '', '', '', '', '', '', toExcelNumber(totals.profit_loss)]);
     totalRow.font = { bold: true };
-    totalRow.getCell(2).numFmt = '#,##0.00';
-    totalRow.getCell(8).numFmt = '#,##0.00;[Red](#,##0.00)';
+    totalRow.getCell(3).numFmt = '#,##0.00';
+    totalRow.getCell(10).numFmt = '#,##0.00;[Red](#,##0.00)';
     sheet.addRow([]);
     sheet.addRow([rowsAdded + ' holding(s). Open Sell/Buy buyback positions are not included.']).font = { italic: true, size: 9 };
+    sheet.addRow(['Market yield is the quote dated on or before the report date (see Quote Date); a blank means no quote was available by that date.']).font = { italic: true, size: 9 };
 
     return workbook.xlsx.writeBuffer();
   }
@@ -2336,7 +2341,7 @@ exports.exportPortfolioMarkToMarket = async (format, payload) => {
       doc.moveDown(0.6);
 
       const startX = 30;
-      const widths = [70, 95, 55, 75, 70, 110, 105, 100];
+      const widths = [58, 58, 92, 46, 64, 58, 58, 100, 100, 88];
       const headers = PORTFOLIO_MTM_COLUMNS.map((c) => c.label);
       const fmtNum = (v, dp) => (v === null || v === undefined || v === '' ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: dp, maximumFractionDigits: dp }));
       const fmtPct = (v) => (v === null || v === undefined || v === '' ? '' : Number(v).toFixed(4) + '%');
@@ -2358,14 +2363,14 @@ exports.exportPortfolioMarkToMarket = async (format, payload) => {
       for (const group of groupPortfolioMtmByMaturity(rows)) {
         for (const r of group.rows) {
           drawRow([
-            r.maturity_date, fmtNum(r.face_value, 2), fmtPct(r.coupon), fmtPct(r.purchased_yield), fmtPct(r.market_yield),
+            r.maturity_date, r.value_date || '', fmtNum(r.face_value, 2), fmtPct(r.coupon), fmtPct(r.purchased_yield), fmtPct(r.market_yield), r.quote_date || '',
             fmtNum(r.value_at_purchased_yield, 6), fmtNum(r.value_at_market_yield, 6), fmtNum(r.profit_loss, 2)
           ]);
         }
         doc.y += 4;
       }
-      drawRow(['GSEC Portfolio', fmtNum(totals.face_value, 2), '', '', '', '', '', fmtNum(totals.profit_loss, 2)], { bold: true });
-      doc.fontSize(7).font('Helvetica').text('Open Sell/Buy buyback positions are not included.', startX, doc.y + 6);
+      drawRow(['GSEC Portfolio', '', fmtNum(totals.face_value, 2), '', '', '', '', '', '', fmtNum(totals.profit_loss, 2)], { bold: true });
+      doc.fontSize(7).font('Helvetica').text('Open Sell/Buy buyback positions are not included. Market yield is the quote dated on or before the report date (see Quote Date).', startX, doc.y + 6);
       doc.end();
     });
   }
