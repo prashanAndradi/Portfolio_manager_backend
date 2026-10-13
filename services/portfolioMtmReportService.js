@@ -15,13 +15,16 @@
  * section that this report does not cover. Once leg 2 settles the bond is owned again and
  * the row counts as an ordinary holding here.
  *
- * Market yields come from mark_to_market.average_yield, which holds only the latest quote
- * per ISIN - a back-dated report prices on that date but with today's market yields.
+ * Market yield is the quote in force on the report date: the latest quote dated on or before
+ * it (services/mtmQuoteLookupService), so a back-dated report uses that day's market price,
+ * not today's. An ISIN with no quote on or before the date is left unpriced. Each row carries
+ * the quote_date it used and the deal's value_date.
  */
 
 const db = require('../config/db');
 const { getGsecReport } = require('./gsecReportService');
 const { excelPRICE } = require('./excelBondPricing');
+const { getQuotesAsAt } = require('./mtmQuoteLookupService');
 
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -67,7 +70,7 @@ async function getPortfolioMarkToMarket({ asAtDate, portfolio, isin } = {}) {
   // Deal metadata the GSec report does not return: the buyback link (to drop Sell/Buy
   // leg-2 rows) and the ISIN's coupon rate.
   const [meta] = await db.query(
-    `SELECT g.deal_number, g.isin_number, g.yield, g.maturity_date, im.coupon_rate,
+    `SELECT g.deal_number, g.isin_number, g.yield, g.maturity_date, g.value_date, im.coupon_rate,
             (bd.id IS NOT NULL AND bd.leg1_transaction_type = 'Sell' AND bd.leg2_transaction_type = 'Buy'
               AND DATE(bd.leg2_value_date) > DATE(?)) AS is_open_sell_buy
        FROM gsec g
@@ -79,17 +82,7 @@ async function getPortfolioMarkToMarket({ asAtDate, portfolio, isin } = {}) {
   const metaByDeal = Object.fromEntries(meta.map((m) => [m.deal_number, m]));
 
   const isins = [...new Set(meta.map((m) => m.isin_number).filter(Boolean))];
-  const marketYieldByIsin = {};
-  if (isins.length) {
-    const [quotes] = await db.query(
-      'SELECT isin_number, average_yield FROM mark_to_market WHERE isin_number IN (?)',
-      [isins]
-    );
-    quotes.forEach((q) => {
-      const y = num(q.average_yield);
-      if (y !== null && y > 0) marketYieldByIsin[q.isin_number] = y;
-    });
-  }
+  const quotesByIsin = await getQuotesAsAt(isins, effectiveAsAt);
 
   const rows = [];
   let excludedSellBuy = 0;
@@ -106,7 +99,9 @@ async function getPortfolioMarkToMarket({ asAtDate, portfolio, isin } = {}) {
     const maturityDate = ymd(m.maturity_date);
     const couponRate = num(m.coupon_rate);
     const purchasedYield = num(m.yield);
-    const marketYield = marketYieldByIsin[m.isin_number] ?? null;
+    const quote = quotesByIsin[String(m.isin_number || '').trim()];
+    const quoteYield = quote ? num(quote.average_yield) : null;
+    const marketYield = quoteYield !== null && quoteYield > 0 ? quoteYield : null;
     if (marketYield === null) missingMarketYield++;
 
     const valuePurchased = valueAtYield({ couponRate, yieldRate: purchasedYield, asAtDate: effectiveAsAt, maturityDate });
@@ -119,10 +114,12 @@ async function getPortfolioMarkToMarket({ asAtDate, portfolio, isin } = {}) {
       deal_number: holding.deal_number,
       isin: m.isin_number || '',
       maturity_date: maturityDate,
+      value_date: ymd(m.value_date),
       face_value: round(face, 2),
       coupon: round(couponRate, 4),
       purchased_yield: round(purchasedYield, 4),
       market_yield: round(marketYield, 4),
+      quote_date: marketYield !== null ? quote.quote_date : null,
       value_at_purchased_yield: valuePurchased,
       value_at_market_yield: valueMarket,
       profit_loss: profitLoss
