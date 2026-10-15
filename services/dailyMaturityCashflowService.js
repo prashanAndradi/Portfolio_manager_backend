@@ -792,7 +792,9 @@ async function getDailyMaturityCashflow(dateStr, options = {}) {
   const systemRow = await getSystemDay();
   const systemYmd = toYmd(systemRow && (systemRow.system_date || systemRow.systemDay));
   const viewMode = resolveViewMode(selectedYmd, systemYmd);
-  const includeSettlements = false;
+  // Maturity Handling shows maturities only. The Daily Cashflow Blotter opts in
+  // to value-date settlements as well, which is the other half of a day's cash.
+  const includeSettlements = options.includeSettlements === true;
 
   const settlementByCode = await loadSettlementAccounts();
 
@@ -808,7 +810,16 @@ async function getDailyMaturityCashflow(dateStr, options = {}) {
     wantBuyback ? queryBuyback(selectedYmd, settlementByCode) : []
   ]);
 
-  let rows = maturityChunks.flat().map(withSettlementValue);
+  const settlementChunks = includeSettlements
+    ? await Promise.all([
+        wantMM ? queryMoneyMarketSettlements(selectedYmd, settlementByCode) : [],
+        wantGsec ? queryGsecSettlements(selectedYmd, settlementByCode) : [],
+        wantRepo ? queryRepoSettlements(selectedYmd, settlementByCode) : [],
+        wantBuyback ? queryBuybackLeg1Settlements(selectedYmd, settlementByCode) : []
+      ])
+    : [];
+
+  let rows = [...maturityChunks, ...settlementChunks].flat().map(withSettlementValue);
 
   // Stable unique key so the same deal can appear as maturity + settlement without collapsing.
   const seen = new Set();

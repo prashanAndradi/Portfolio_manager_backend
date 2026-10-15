@@ -596,12 +596,6 @@ const paths = {
   '/api/reports/broker': {
     get: op({ summary: 'Broker report', tags: 'Reports', parameters: reportQuery })
   },
-  '/api/reports/daily-portfolio-balance': {
-    get: op({ summary: 'Daily portfolio balancing report', tags: 'Reports', parameters: reportQuery })
-  },
-  '/api/reports/daily-portfolio-balance/breakdown': {
-    get: op({ summary: 'Daily portfolio balance custodian breakdown', tags: 'Reports', parameters: reportQuery })
-  },
   '/api/reports/account-figures': {
     get: op({ summary: 'Account figures for GSEC trial-balance recon', tags: 'Reports' })
   },

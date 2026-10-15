@@ -6,7 +6,6 @@ const buybackReportService = require('../services/buybackReportService');
 const repoReportService = require('../services/repoReportService');
 const tbillReportService = require('../services/tbillReportService');
 const brokerReportService = require('../services/brokerReportService');
-const dailyPortfolioBalanceService = require('../services/dailyPortfolioBalanceService');
 const accountReportFiguresService = require('../services/accountReportFiguresService');
 const reportExporter = require('../utils/reportExporter');
 
@@ -549,87 +548,6 @@ exports.getBrokerReport = async (req, res) => {
   } catch (err) {
     console.error('Broker Report Error:', err);
     res.status(500).json({ error: 'Failed to generate Broker report', details: err.message });
-  }
-};
-
-exports.getDailyPortfolioBalanceReport = async (req, res) => {
-  try {
-    const { asAtDate, format } = req.query;
-    if (!asAtDate) {
-      return res.status(400).json({ error: 'asAtDate is required' });
-    }
-    const result = await dailyPortfolioBalanceService.getDailyPortfolioBalance(asAtDate);
-
-    if (format === 'csv' || format === 'excel' || format === 'pdf') {
-      const custodianNames = result.custodianNames || [];
-      const flatRows = (result.rows || []).map((row) => {
-        const flat = {
-          maturity_date: row.maturity_date,
-          isin: row.isin,
-          coupon_rate: row.coupon_rate,
-          opening_balance: row.opening_balance,
-          sell_buy: row.sell_buy,
-          buy_sell: row.buy_sell,
-          from: row.from,
-          to: row.to,
-          closing_balance: row.closing_balance,
-          in_hand: row.in_hand
-        };
-        for (const name of custodianNames) {
-          flat[name] = row.custodians?.[name] ?? 0;
-        }
-        return flat;
-      });
-      if (result.totals) {
-        const totalRow = {
-          maturity_date: 'Total',
-          isin: '',
-          coupon_rate: '',
-          opening_balance: result.totals.opening_balance,
-          sell_buy: '',
-          buy_sell: '',
-          from: result.totals.from,
-          to: result.totals.to,
-          closing_balance: result.totals.closing_balance,
-          in_hand: result.totals.in_hand
-        };
-        for (const name of custodianNames) {
-          totalRow[name] = result.totals.custodians?.[name] ?? 0;
-        }
-        flatRows.push(totalRow);
-      }
-      const fileBuffer = await reportExporter.export(format, flatRows);
-      res.setHeader(
-        'Content-Disposition',
-        `attachment; filename=daily_portfolio_balance_report.${format === 'excel' ? 'xlsx' : format}`
-      );
-      res.setHeader('Content-Type', reportExporter.getMimeType(format));
-      return res.send(fileBuffer);
-    }
-
-    res.json(result);
-  } catch (err) {
-    console.error('Daily Portfolio Balance Report Error:', err);
-    res.status(500).json({ error: 'Failed to generate Daily Portfolio Balance report', details: err.message });
-  }
-};
-
-exports.getDailyPortfolioBalanceBreakdown = async (req, res) => {
-  try {
-    const { asAtDate, isin, metric, custodian } = req.query;
-    if (!asAtDate || !isin || !metric) {
-      return res.status(400).json({ error: 'asAtDate, isin and metric are required' });
-    }
-    const result = await dailyPortfolioBalanceService.getDailyPortfolioBalanceBreakdown(
-      asAtDate,
-      isin,
-      metric,
-      custodian || null
-    );
-    res.json(result);
-  } catch (err) {
-    console.error('Daily Portfolio Balance Breakdown Error:', err);
-    res.status(500).json({ error: 'Failed to fetch breakdown', details: err.message });
   }
 };
 
