@@ -186,6 +186,7 @@ const accountRoutes = require('./routes/accounts');
 const portfolioRoutes = require('./routes/portfolioRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const bankChargesRoutes = require('./routes/bankChargesRoutes');
+const dailyCashflowBlotterRoutes = require('./routes/dailyCashflowBlotterRoutes');
 const interestIncomeRoutes = require('./routes/interestIncomeRoutes');
 const transactionTypeRoutes = require('./routes/transactionTypes');
 const securityRoutes = require('./routes/securities');
@@ -228,6 +229,7 @@ app.use('/api/account-mappings', accountMappingRoutes);
 app.use('/api/chart-of-accounts', chartOfAccountsRoutes);
 app.use('/api/fixed-deposit', fixedDepositRoutes);
 app.use('/api/bank-charges', bankChargesRoutes);
+app.use('/api/daily-cashflow-blotter', dailyCashflowBlotterRoutes);
 app.use('/api/reports/interest-income', interestIncomeRoutes);
 
 // Add a direct register endpoint that will definitely work
