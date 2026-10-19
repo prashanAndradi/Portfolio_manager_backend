@@ -96,21 +96,38 @@ exports.setOpeningBalance = async (ymd, amount, { notes = null, enteredBy = null
   return exports.getOpeningBalance(ymd);
 };
 
+// Which approval level a charge is waiting on, and how to label it.
+const CHARGE_LEVELS = {
+  pending_verification: { stage: 'back_office_verifier', label: 'Awaiting verification', posted: false },
+  verified: { stage: 'back_office_final', label: 'Awaiting final approval', posted: false },
+  approved: { stage: null, label: 'Posted to GL', posted: true },
+  rejected: { stage: null, label: 'Rejected', posted: false },
+  legacy: { stage: null, label: 'Pre-dates approval', posted: false }
+};
+
 exports.getBankCharges = async (ymd) => {
   const [rows] = await db.query(
     `SELECT id, entry_date, bank_name, bank_account_code, description, amount,
-            charge_type, reference_no, account_code, status, created_by,
-            approved_by, approved_at, ledger_entry_ids, rejected_by, reject_reason
+            charge_type, reference_no, account_code, status, created_by, created_by_user_id,
+            verified_by, verified_by_user_id, verified_at,
+            approved_by, approved_by_user_id, approved_at,
+            ledger_entry_ids, rejected_by, reject_reason
        FROM bank_charges
       WHERE entry_date = ? AND status <> 'rejected'
       ORDER BY id`,
     [ymd]
   );
-  return (rows || []).map((r) => ({
-    ...r,
-    amount: Number(r.amount) || 0,
-    entry_date: toYmd(r.entry_date)
-  }));
+  return (rows || []).map((r) => {
+    const level = CHARGE_LEVELS[normalise(r.status)] || { stage: null, label: r.status, posted: false };
+    return {
+      ...r,
+      amount: Number(r.amount) || 0,
+      entry_date: toYmd(r.entry_date),
+      level_stage: level.stage,
+      level_label: level.label,
+      posted: level.posted
+    };
+  });
 };
 
 /**
@@ -154,7 +171,9 @@ exports.getDailyCashflowBlotter = async (dateStr, options = {}) => {
   // Charges reduce cash from the moment they are entered, whether or not the
   // ledger posting has been approved yet - the money has already left.
   const chargeTotal = round2(charges.reduce((s, c) => s + c.amount, 0));
-  const chargesAwaitingApproval = charges.filter((c) => normalise(c.status) === 'pending_approval').length;
+  const chargesAwaitingApproval = charges.filter(
+    (c) => normalise(c.status) === 'pending_verification' || normalise(c.status) === 'verified'
+  ).length;
 
   const opening = openingRow ? openingRow.amount : null;
   const netMovement = round2(inflows + outflows - chargeTotal);
@@ -190,5 +209,6 @@ exports.getDailyCashflowBlotter = async (dateStr, options = {}) => {
   };
 };
 
+exports.CHARGE_LEVELS = CHARGE_LEVELS;
 exports.SETTLED_STATUSES = SETTLED_STATUSES;
 exports.classifyRow = classifyRow;

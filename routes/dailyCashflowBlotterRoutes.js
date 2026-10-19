@@ -19,9 +19,48 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
 const blotter = require('../services/dailyCashflowBlotterService');
+const { checkAuth } = require('../middleware/auth');
+const { resolveEffectiveWorkflowAuth } = require('../utils/effectiveWorkflowAuth');
+const { actorCanActAtStage, requiredRolesForStage } = require('../utils/workflowStageAuth');
 
 // Dr this, Cr the bank the charge came out of.
 const BANK_CHARGE_EXPENSE_CODE = '651-101-120-518-44';
+
+/**
+ * Two-level approval, the same chain the deal products use:
+ *
+ *   pending_verification --verify--> verified --approve--> approved (posted)
+ *
+ * Deliberately no per-deal / per-day limit check: a bank charge is a fee, not
+ * a dealing position, so the dealer limits that gate deal approval do not
+ * apply. Authority here is role-based only.
+ */
+const STAGE_FOR_STATUS = {
+  pending_verification: 'back_office_verifier',
+  verified: 'back_office_final'
+};
+
+/**
+ * The acting user, resolved from the DATABASE rather than from the JWT.
+ * A token is issued for seven days, so a role revoked yesterday would still be
+ * presented by a token minted before the change - reading authorizer_assignments
+ * live means a revocation takes effect immediately.
+ */
+async function resolveActor(req) {
+  const id = req.user && (req.user.id || req.user.userId);
+  if (!id) return null;
+  return resolveEffectiveWorkflowAuth(id);
+}
+
+function forbid(res, stageKey, actorRow) {
+  const needed = requiredRolesForStage(stageKey).join(' or ');
+  return res.status(403).json({
+    success: false,
+    message: `This step needs ${needed}. You are signed in as ${actorRow ? actorRow.role : 'an unassigned user'}.`,
+    required_roles: requiredRolesForStage(stageKey),
+    your_role: actorRow ? actorRow.role : null
+  });
+}
 
 /**
  * Normalise to YYYY-MM-DD. mysql2 hands DATE columns back as Date objects, so
@@ -42,12 +81,6 @@ function ymd(value) {
 
 const isYmd = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
 
-const actor = (req) =>
-  (req.user && (req.user.username || req.user.name || req.user.email)) ||
-  req.body?.created_by ||
-  req.body?.approved_by ||
-  null;
-
 async function accountByCode(code) {
   const [rows] = await db.query(
     'SELECT id, account_code, name FROM chart_of_accounts WHERE account_code = ? AND is_active = TRUE',
@@ -56,12 +89,48 @@ async function accountByCode(code) {
   return rows[0] || null;
 }
 
-router.get('/', async (req, res) => {
+router.get('/', checkAuth, async (req, res) => {
   try {
     const date = ymd(req.query.date);
     if (!isYmd(date)) return res.status(400).json({ success: false, message: 'date (YYYY-MM-DD) is required' });
-    const data = await blotter.getDailyCashflowBlotter(date, { type: req.query.type || 'all' });
-    res.json({ success: true, ...data });
+    const [data, actorRow] = await Promise.all([
+      blotter.getDailyCashflowBlotter(date, { type: req.query.type || 'all' }),
+      resolveActor(req)
+    ]);
+
+    // Tell the page what this user may do, rather than letting it guess from a
+    // role string. The server still enforces every action independently - this
+    // only decides which buttons are worth showing.
+    const canVerify = actorCanActAtStage(actorRow, 'back_office_verifier');
+    const canApprove = actorCanActAtStage(actorRow, 'back_office_final');
+    const myId = actorRow ? actorRow.id : null;
+    const isAdmin = Boolean(actorRow && actorRow.isAdmin);
+
+    data.charges = data.charges.map((c) => ({
+      ...c,
+      can_verify:
+        c.status === 'pending_verification' &&
+        canVerify &&
+        (isAdmin || c.created_by_user_id !== myId),
+      can_approve:
+        c.status === 'verified' &&
+        canApprove &&
+        (isAdmin || c.verified_by_user_id !== myId),
+      can_delete:
+        c.status === 'pending_verification' && (isAdmin || c.created_by_user_id === myId)
+    }));
+
+    res.json({
+      success: true,
+      ...data,
+      viewer: {
+        username: actorRow ? actorRow.username : null,
+        role: actorRow ? actorRow.role : null,
+        is_admin: isAdmin,
+        can_verify: canVerify,
+        can_approve: canApprove
+      }
+    });
   } catch (err) {
     console.error('Daily cashflow blotter failed:', err);
     res.status(500).json({ success: false, message: err.message });
@@ -95,8 +164,9 @@ router.get('/bank-accounts', async (_req, res) => {
   }
 });
 
-router.put('/opening-balance', async (req, res) => {
+router.put('/opening-balance', checkAuth, async (req, res) => {
   try {
+    const actorRow = await resolveActor(req);
     const date = ymd(req.body.date);
     if (!isYmd(date)) return res.status(400).json({ success: false, message: 'date (YYYY-MM-DD) is required' });
     const amount = Number(req.body.opening_balance);
@@ -105,7 +175,7 @@ router.put('/opening-balance', async (req, res) => {
     }
     const saved = await blotter.setOpeningBalance(date, amount, {
       notes: req.body.notes || null,
-      enteredBy: actor(req)
+      enteredBy: actorRow ? actorRow.username : null
     });
     res.json({ success: true, opening_balance: saved });
   } catch (err) {
@@ -114,8 +184,9 @@ router.put('/opening-balance', async (req, res) => {
   }
 });
 
-router.post('/charges', async (req, res) => {
+router.post('/charges', checkAuth, async (req, res) => {
   try {
+    const actorRow = await resolveActor(req);
     const date = ymd(req.body.entry_date);
     const amount = Number(req.body.amount);
     const { description, bank_account_code: bankAccountCode, reference_no: referenceNo, charge_type: chargeType } = req.body;
@@ -139,8 +210,8 @@ router.post('/charges', async (req, res) => {
     const [result] = await db.query(
       `INSERT INTO bank_charges
          (entry_date, bank_name, bank_account_code, description, amount, charge_type,
-          reference_no, account_code, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
+          reference_no, account_code, status, created_by, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_verification', ?, ?)`,
       [
         date,
         bank.name,
@@ -150,7 +221,8 @@ router.post('/charges', async (req, res) => {
         chargeType || 'bank_charge',
         referenceNo || null,
         BANK_CHARGE_EXPENSE_CODE,
-        actor(req)
+        actorRow ? actorRow.username : null,
+        actorRow ? actorRow.id : null
       ]
     );
     res.status(201).json({ success: true, id: result.insertId });
@@ -161,13 +233,57 @@ router.post('/charges', async (req, res) => {
 });
 
 /**
- * Approve and post. The GL write and the status change go in one transaction:
- * a charge marked approved with no ledger entries behind it (or the reverse)
- * would be invisible until someone reconciled by hand.
+ * Level 1 - verification. Moves the charge on to the final approver. Nothing
+ * is posted here; the ledger is only touched at the final level.
  */
-router.post('/charges/:id/approve', async (req, res) => {
+router.post('/charges/:id/verify', checkAuth, async (req, res) => {
+  try {
+    const actorRow = await resolveActor(req);
+    const [[charge]] = await db.query('SELECT * FROM bank_charges WHERE id = ?', [req.params.id]);
+    if (!charge) return res.status(404).json({ success: false, message: 'charge not found' });
+
+    if (charge.status !== 'pending_verification') {
+      return res.status(409).json({
+        success: false,
+        message:
+          charge.status === 'verified'
+            ? 'charge is already verified and waiting for final approval'
+            : `charge cannot be verified from status "${charge.status}"`
+      });
+    }
+    if (!actorCanActAtStage(actorRow, 'back_office_verifier')) {
+      return forbid(res, 'back_office_verifier', actorRow);
+    }
+    // Maker-checker: whoever entered the charge cannot also verify it.
+    if (!actorRow.isAdmin && charge.created_by_user_id && charge.created_by_user_id === actorRow.id) {
+      return res.status(403).json({
+        success: false,
+        message: 'you entered this charge, so it has to be verified by someone else'
+      });
+    }
+
+    await db.query(
+      `UPDATE bank_charges
+          SET status = 'verified', verified_by = ?, verified_by_user_id = ?, verified_at = NOW()
+        WHERE id = ?`,
+      [actorRow.username, actorRow.id, charge.id]
+    );
+    res.json({ success: true, status: 'verified', next_level: 'back_office_final' });
+  } catch (err) {
+    console.error('Verifying bank charge failed:', err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+/**
+ * Level 2 - final approval, which posts. The GL write and the status change go
+ * in one transaction: a charge marked approved with no ledger entries behind it
+ * (or the reverse) would be invisible until someone reconciled by hand.
+ */
+router.post('/charges/:id/approve', checkAuth, async (req, res) => {
   const connection = await db.pool.getConnection();
   try {
+    const actorRow = await resolveActor(req);
     await connection.beginTransaction();
 
     const [[charge]] = await connection.query(
@@ -185,6 +301,26 @@ router.post('/charges/:id/approve', async (req, res) => {
     if (charge.status === 'rejected') {
       await connection.rollback();
       return res.status(409).json({ success: false, message: 'charge was rejected; enter a new one' });
+    }
+    if (charge.status === 'pending_verification') {
+      await connection.rollback();
+      return res.status(409).json({
+        success: false,
+        message: 'charge has to be verified by a back office verifier before final approval'
+      });
+    }
+    if (!actorCanActAtStage(actorRow, 'back_office_final')) {
+      await connection.rollback();
+      return forbid(res, 'back_office_final', actorRow);
+    }
+    // Maker-checker across the two levels: the verifier cannot also give final
+    // approval, so two different people always stand behind a posting.
+    if (!actorRow.isAdmin && charge.verified_by_user_id && charge.verified_by_user_id === actorRow.id) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'you verified this charge, so final approval has to come from someone else'
+      });
     }
 
     const [[expense]] = await connection.query(
@@ -233,9 +369,10 @@ router.post('/charges/:id/approve', async (req, res) => {
 
     await connection.query(
       `UPDATE bank_charges
-          SET status = 'approved', approved_by = ?, approved_at = NOW(), ledger_entry_ids = ?
+          SET status = 'approved', approved_by = ?, approved_by_user_id = ?,
+              approved_at = NOW(), ledger_entry_ids = ?
         WHERE id = ?`,
-      [actor(req), ids.join(','), charge.id]
+      [actorRow.username, actorRow.id, ids.join(','), charge.id]
     );
 
     await connection.commit();
@@ -254,8 +391,13 @@ router.post('/charges/:id/approve', async (req, res) => {
   }
 });
 
-router.post('/charges/:id/reject', async (req, res) => {
+/**
+ * Reject at whichever level the charge is currently sitting at - a verifier can
+ * turn one back, and so can the final approver.
+ */
+router.post('/charges/:id/reject', checkAuth, async (req, res) => {
   try {
+    const actorRow = await resolveActor(req);
     const [[charge]] = await db.query('SELECT status FROM bank_charges WHERE id = ?', [req.params.id]);
     if (!charge) return res.status(404).json({ success: false, message: 'charge not found' });
     if (charge.status === 'approved') {
@@ -264,9 +406,15 @@ router.post('/charges/:id/reject', async (req, res) => {
         message: 'charge is already posted to the ledger; it has to be reversed rather than rejected'
       });
     }
+    const stageKey = STAGE_FOR_STATUS[charge.status];
+    if (!stageKey) {
+      return res.status(409).json({ success: false, message: `charge cannot be rejected from status "${charge.status}"` });
+    }
+    if (!actorCanActAtStage(actorRow, stageKey)) return forbid(res, stageKey, actorRow);
+
     await db.query(
       "UPDATE bank_charges SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), reject_reason = ? WHERE id = ?",
-      [actor(req), req.body.reason || null, req.params.id]
+      [actorRow.username, req.body.reason || null, req.params.id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -275,14 +423,32 @@ router.post('/charges/:id/reject', async (req, res) => {
 });
 
 /** Only an unposted charge can be deleted; a posted one needs a reversal. */
-router.delete('/charges/:id', async (req, res) => {
+router.delete('/charges/:id', checkAuth, async (req, res) => {
   try {
-    const [[charge]] = await db.query('SELECT status FROM bank_charges WHERE id = ?', [req.params.id]);
+    const actorRow = await resolveActor(req);
+    const [[charge]] = await db.query(
+      'SELECT status, created_by_user_id FROM bank_charges WHERE id = ?',
+      [req.params.id]
+    );
     if (!charge) return res.status(404).json({ success: false, message: 'charge not found' });
     if (charge.status === 'approved') {
       return res.status(409).json({
         success: false,
         message: 'charge is posted to the ledger and cannot be deleted; reverse it instead'
+      });
+    }
+    // Once a verifier has signed it, withdrawing it is a reject, not a delete -
+    // otherwise the verification would vanish without trace.
+    if (charge.status !== 'pending_verification') {
+      return res.status(409).json({
+        success: false,
+        message: 'charge has already been verified; reject it rather than deleting it'
+      });
+    }
+    if (!actorRow || (!actorRow.isAdmin && charge.created_by_user_id !== actorRow.id)) {
+      return res.status(403).json({
+        success: false,
+        message: 'only the person who entered this charge can delete it'
       });
     }
     await db.query('DELETE FROM bank_charges WHERE id = ?', [req.params.id]);
