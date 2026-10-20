@@ -21,9 +21,9 @@ const { getSystemDay } = require('../models/systemDayModel');
 const accountMapping = require('./accountMappingService');
 const {
   computeGsecPerDayAccrual,
-  computeGsecDailyAmortization,
   resolveGsecRemainingForDailyPosting
 } = require('./gsecCouponPeriod');
+const { computeNvpDailyAmortization } = require('./gsecNvpAmortization');
 const { buildSoldByDealMap } = require('./gsecSellDeductionService');
 
 async function resolveAccountIdByCode(accountCode) {
@@ -275,6 +275,31 @@ async function postBackdatedAmortizationCatchup(transaction) {
   );
   const alreadyPosted = new Set((alreadyPostedRows || []).map((r) => ymdDateOnly(r.d)));
 
+  // The NVP basis prices the holding on two consecutive days, so it needs the
+  // yield and coupon schedule. The caller's `transaction` may not carry them
+  // (its SELECT list varies), so fill them in here rather than depend on it.
+  let pricingFields = transaction;
+  if (
+    transaction.coupon_rate === undefined ||
+    transaction.issue_date === undefined ||
+    transaction.coupon_date_1 === undefined ||
+    transaction.yield === undefined
+  ) {
+    try {
+      const [rows] = await db.query(
+        `SELECT g.yield, im.coupon_rate, im.issue_date, im.coupon_date_1, im.coupon_date_2
+           FROM gsec g
+           LEFT JOIN isin_master im
+             ON g.isin_number COLLATE utf8mb4_unicode_ci = im.isin_number COLLATE utf8mb4_unicode_ci
+          WHERE g.id = ? LIMIT 1`,
+        [transaction.id]
+      );
+      if (rows && rows.length) pricingFields = Object.assign({}, transaction, rows[0]);
+    } catch (err) {
+      console.warn('Backdated amortization catch-up: could not load pricing fields:', err.message);
+    }
+  }
+
   let posted = 0;
   let skippedAlreadyPosted = 0;
   let lastDailyAmount = null;
@@ -295,8 +320,12 @@ async function postBackdatedAmortizationCatchup(transaction) {
     if (effectiveRemaining <= 0) {
       continue;
     }
-    const dealForAmort = Object.assign({}, dealWithSold, { remaining_face_value: effectiveRemaining });
-    const computed = computeGsecDailyAmortization(dealForAmort, day);
+    const dealForAmort = Object.assign({}, pricingFields, dealWithSold, {
+      remaining_face_value: effectiveRemaining
+    });
+    // Same NVP basis as EOD, so a day caught up later posts the same figure it
+    // would have posted on the day itself.
+    const computed = computeNvpDailyAmortization(dealForAmort, day);
     if (!computed.ok) {
       console.warn('Backdated amortization catch-up: skipping day', day, 'for', dealNumber, computed.reason);
       continue;
