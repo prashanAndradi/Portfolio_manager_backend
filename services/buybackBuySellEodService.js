@@ -10,7 +10,8 @@
  */
 
 const db = require('../config/database');
-const { computeGsecPerDayAccrual, computeGsecDailyAmortization } = require('./gsecCouponPeriod');
+const { computeGsecPerDayAccrual } = require('./gsecCouponPeriod');
+const { computeNvpDailyAmortization } = require('./gsecNvpAmortization');
 const {
   BUYSELL_ACCRUAL_ASSET,
   BUYSELL_ACCRUAL_INCOME,
@@ -100,6 +101,37 @@ async function enrichIsin(bb) {
     console.warn(`buybackBuySellEod: ISIN lookup failed for ${bb.leg1_isin}:`, e.message);
   }
   return isin;
+}
+
+/**
+ * Context for pricing the buy leg on the NVP amortisation basis.
+ *
+ * Deliberately NOT buildBuyLegDealContext: that one sets `maturity_date` to the
+ * leg2 value date, which is the right end point for a straight-line accrual
+ * over the holding period but wrong for pricing. NVP values the underlying
+ * BOND, so it needs the bond's real maturity and coupon schedule - leg2 is
+ * typically years earlier (e.g. leg2 2026-05-04 against a 2032-10-01 bond), and
+ * pricing to it would value a security that does not exist.
+ *
+ * The holding window is still respected: EOD only posts between leg1 and leg2
+ * value dates, so the days priced are exactly the days held.
+ */
+function buildBuyLegPricingContext(bb, isin) {
+  const face = legFace(bb.leg1_adjusted_face_value, bb.leg1_face_value);
+  return {
+    face_value: face,
+    remaining_face_value: face,
+    clean_price: bb.leg1_clean_price,
+    value_date: bb.leg1_value_date,
+    // The bond's own maturity, never leg2_value_date.
+    maturity_date: bb.maturity_date || isin.maturity_date,
+    issue_date: bb.issue_date || isin.issue_date,
+    yield: bb.leg1_yield_rate,
+    coupon_rate: bb.coupon_rate ?? isin.coupon_rate,
+    isin_number: bb.leg1_isin,
+    coupon_date_1: bb.coupon_date1 || isin.coupon_date_1,
+    coupon_date_2: bb.coupon_date2 || isin.coupon_date_2
+  };
 }
 
 function buildBuyLegDealContext(bb, isin) {
@@ -267,9 +299,14 @@ async function runBuySellDailyAmortizationPosting(systemDay) {
     try {
       const synthetic = syntheticLeg1BuyDealNumber(bb.deal_number);
       const isin = await enrichIsin(bb);
-      const dealCtx = buildBuyLegDealContext(bb, isin);
-      const computed = computeGsecDailyAmortization(dealCtx, systemDay);
+      const pricingCtx = buildBuyLegPricingContext(bb, isin);
+      // Same NVP basis as the GSec EOD: Balance x (NVP(today) - NVP(yesterday))
+      // / 100 at the leg's purchase yield, both rounded to 4dp.
+      const computed = computeNvpDailyAmortization(pricingCtx, systemDay);
       if (!computed.ok) {
+        console.warn(
+          `buybackBuySellEod: amortization skipped for ${bb.deal_number}: ${computed.reason}`
+        );
         if (colFlags.amort && bb.leg1_per_day_amortization != null) {
           await db.query('UPDATE buyback_deals SET leg1_per_day_amortization = 0 WHERE id = ?', [
             bb.id,
@@ -329,6 +366,7 @@ module.exports = {
   runBuySellDailyAccrualPosting,
   runBuySellDailyAmortizationPosting,
   buildBuyLegDealContext,
+  buildBuyLegPricingContext,
   ACCRUAL_DESC_PREFIX,
   AMORT_DESC_PREFIX,
 };
