@@ -12,8 +12,8 @@ const repoReportService = require('./repoReportService');
 const db = require('../config/database');
 const {
   computeGsecPerDayAccrual,
-  computeGsecDailyAmortization
 } = require('./gsecCouponPeriod');
+const { computeNvpDailyAmortization } = require('./gsecNvpAmortization');
 
 const parseNum = (v) => Number(String(v ?? '0').replace(/,/g, '')) || 0;
 
@@ -97,6 +97,8 @@ async function sumBuySellAccrualAmort(asAtDate) {
        bd.coupon_date1,
        bd.coupon_date2,
        bd.maturity_date,
+       bd.leg1_yield_rate,
+       bd.issue_date,
        im.issue_date AS isin_issue_date,
        im.maturity_date AS isin_maturity_date,
        im.coupon_rate AS isin_coupon_rate,
@@ -149,13 +151,34 @@ async function sumBuySellAccrualAmort(asAtDate) {
       coupon_date_2: bb.coupon_date2 || bb.isin_coupon_date_2
     };
 
+    // Amortisation prices the underlying BOND, so it uses the bond's own
+    // maturity and coupon schedule - not matYmd, which is the leg2 unwind date
+    // and typically years earlier. The accrual above keeps its own context.
+    const amortCtx = {
+      face_value: face,
+      remaining_face_value: face,
+      clean_price: bb.leg1_clean_price,
+      value_date: bb.leg1_value_date,
+      maturity_date: bb.maturity_date || bb.isin_maturity_date,
+      issue_date: bb.issue_date || bb.isin_issue_date,
+      yield: bb.leg1_yield_rate,
+      coupon_rate: parseNum(bb.coupon_rate ?? bb.isin_coupon_rate),
+      isin_number: bb.leg1_isin,
+      coupon_date_1: bb.coupon_date1 || bb.isin_coupon_date_1,
+      coupon_date_2: bb.coupon_date2 || bb.isin_coupon_date_2
+    };
+
     // Walk each holding day so coupon-period changes in per-day accrual are reflected.
     for (let i = 0; i < holdingDays; i += 1) {
       const dayYmd = addUtcDays(startYmd, i);
       const acc = computeGsecPerDayAccrual(dealCtx, dayYmd, 2);
       if (acc.ok) accrual += Number(acc.amount) || 0;
-      const am = computeGsecDailyAmortization(dealCtx, dayYmd);
-      if (am.ok) amort += Number(am.amount) || 0;
+      // NVP basis, matching what EOD posts. `dailyAmount`, not `amount`: the
+      // accrual helper above returns `amount` but the amortisation helpers
+      // return `dailyAmount`, and reading `amount` here yielded undefined ->
+      // NaN -> 0, so this total used to be silently always zero.
+      const am = computeNvpDailyAmortization(amortCtx, dayYmd);
+      if (am.ok) amort += Number(am.signedAmount) || 0;
     }
   }
 

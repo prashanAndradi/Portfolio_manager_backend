@@ -6,9 +6,9 @@ const { checkAuth, checkAdmin } = require('../middleware/auth');
 const accountMapping = require('../services/accountMappingService');
 const {
   computeGsecPerDayAccrual,
-  computeGsecDailyAmortization,
   resolveGsecRemainingForDailyPosting
 } = require('../services/gsecCouponPeriod');
+const { computeNvpDailyAmortization } = require('../services/gsecNvpAmortization');
 const { buildSoldByDealMap } = require('../services/gsecSellDeductionService');
 const { postFinalApprovedBuyLedger } = require('../services/gsecApprovalLedgerService');
 const { postBuySellBuybackLedger } = require('../services/buybackBuySellLedgerService');
@@ -483,7 +483,11 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
       ),
       db.query(
         `SELECT g.id, g.deal_number, g.value_date, g.maturity_date, g.face_value,
-                g.remaining_face_value, g.clean_price,
+                g.remaining_face_value, g.clean_price, g.yield, g.isin_number,
+                -- The NVP amortisation basis prices the holding on two
+                -- consecutive days, so it needs the yield and the coupon
+                -- schedule, not just the purchase clean price.
+                im.coupon_rate, im.issue_date, im.coupon_date_1, im.coupon_date_2,
                 COALESCE((
                   SELECT SUM(s.face_value)
                   FROM gsec s
@@ -494,6 +498,8 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
                     AND DATE(s.value_date) <= DATE(?)
                 ), 0) AS linked_sold_face_value
          FROM gsec g
+         LEFT JOIN isin_master im
+           ON g.isin_number COLLATE utf8mb4_unicode_ci = im.isin_number COLLATE utf8mb4_unicode_ci
          WHERE g.transaction_type = 'Buy'
            AND g.status = 'final_approved'
            AND COALESCE(g.matured, 0) = 0
@@ -839,6 +845,7 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
       );
       let posted = 0;
       let skippedAlreadyPosted = 0;
+      const gsecAmortSkipReasons = [];
       for (const deal of gsecAmortDeals) {
         try {
           if (!valueDateOnOrBeforeSystemDay(deal.value_date, systemDay)) {
@@ -862,8 +869,18 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
           const dealForAmort = Object.assign({}, deal, {
             remaining_face_value: effectiveRemainingAmort
           });
-          const computed = computeGsecDailyAmortization(dealForAmort, systemDay);
+          // NVP basis: Balance x (NVP(today) - NVP(yesterday)) / 100, both at the
+          // deal's purchase yield and rounded to 4dp - the figure Finance
+          // reconciles to off the GSec report's NVP column.
+          const computed = computeNvpDailyAmortization(dealForAmort, systemDay);
           if (!computed.ok) {
+            // Say so rather than silently zeroing: a deal that cannot be priced
+            // is not a deal that amortises nothing, and a quiet 0 is
+            // indistinguishable from a correctly-amortised par bond.
+            console.warn(
+              `GSec amortization skipped for ${deal.deal_number}: ${computed.reason}`
+            );
+            gsecAmortSkipReasons.push({ deal_number: deal.deal_number, reason: computed.reason });
             if (hasPerDayAmortizationColumn) {
               await db.query('UPDATE gsec SET per_day_amortization = 0 WHERE id = ?', [deal.id]);
             }
@@ -919,7 +936,12 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
         posted,
         skipped_already_posted: skippedAlreadyPosted,
         enabled: true,
-        deals_loaded: gsecAmortDeals.length
+        deals_loaded: gsecAmortDeals.length,
+        basis: 'nvp-4dp',
+        // Holdings that could not be priced on the NVP basis. Surfaced rather
+        // than buried so a deal missing a yield or coupon schedule is visible
+        // the day it stops amortising, not at the next reconciliation.
+        skipped_not_priceable: gsecAmortSkipReasons
       };
     };
 
