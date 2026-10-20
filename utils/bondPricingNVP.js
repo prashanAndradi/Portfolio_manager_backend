@@ -161,18 +161,24 @@ function calculateNVP({
     dirtyPrice += pv;
   }
 
-  // Truncate dirty price to 4 decimals (matching frontend)
-  const dirtyPrice10000 = Math.floor(dirtyPrice * 10000 + 0.0001);
-  const truncatedDirtyPrice = dirtyPrice10000 / 10000;
-
-  // Calculate accrued interest per 100 (matching frontend logic)
+  // Accrued interest per 100 (matching frontend logic)
   const daysAccrued = getDaysDifference(settle, lastCouponDate);
   const accruedInterest = coupon * (daysAccrued / daysInCouponPeriod);
-  const truncatedAccruedInterestPer100 = Math.floor(accruedInterest * 10000) / 10000;
 
-  // Clean price is dirty price minus accrued interest (matching frontend)
-  const cleanPrice = truncatedDirtyPrice - truncatedAccruedInterestPer100;
-  const truncatedCleanPrice = Math.floor(cleanPrice * 10000) / 10000;
+  // NVP is ROUNDED to 4 decimals, and rounded ONCE, from the unrounded clean
+  // price. Rounding dirty and accrued separately and then subtracting is not
+  // the same thing: on 16-Oct-2026 that route gives 99.8937 where rounding the
+  // clean price once gives 99.8936, which is the figure Finance reconciles to.
+  //
+  // It used to truncate. Truncation and rounding differ by one unit in the 4th
+  // decimal, and because a day's pull to par is only ~0.0015 per 100, that one
+  // unit moves the day's amortisation by around 7%.
+  const round4 = (v) => Math.round(v * 10000) / 10000;
+
+  const truncatedDirtyPrice = round4(dirtyPrice);
+  const truncatedAccruedInterestPer100 = round4(accruedInterest);
+  const cleanPrice = dirtyPrice - accruedInterest;
+  const truncatedCleanPrice = round4(cleanPrice);
 
   // Debug logging with detailed calculation breakdown
   if (!quiet) {
@@ -201,15 +207,19 @@ function calculateNVP({
     });
     console.log('Raw Dirty Price (sum of PVs):', dirtyPrice);
     console.log('--- Final Values ---');
-    console.log('Dirty Price Per 100 (truncated):', truncatedDirtyPrice);
-    console.log('Accrued Interest Per 100 (truncated):', truncatedAccruedInterestPer100);
-    console.log('Clean Price (dirty - accrued, truncated):', truncatedCleanPrice);
+    console.log('Dirty Price Per 100 (rounded 4dp):', truncatedDirtyPrice);
+    console.log('Accrued Interest Per 100 (rounded 4dp):', truncatedAccruedInterestPer100);
+    console.log('Clean Price / NVP (rounded 4dp, once):', truncatedCleanPrice);
     console.log('================================');
   }
 
   return {
     nvp: truncatedCleanPrice.toFixed(4),
-    accruedInterest: truncatedAccruedInterestPer100.toFixed(4)
+    accruedInterest: truncatedAccruedInterestPer100.toFixed(4),
+    // Unrounded, for callers that need to compare two days without the 4dp
+    // step. The posted amortisation deliberately uses the rounded `nvp`.
+    nvpExact: cleanPrice,
+    accruedInterestExact: accruedInterest
   };
 }
 
