@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { differenceInDays, parseISO } = require('date-fns');
 const { calculateNVP } = require('../utils/bondPricingNVP');
+const { computeNvpDailyAmortization } = require('../services/gsecNvpAmortization');
 const {
   getCouponPeriodLengthDaysFromIsinSchedule,
   resolveIsinCouponDates,
@@ -673,9 +674,6 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
     const dailyAccrual = computedDailyAccrual.ok
       ? Number(computedDailyAccrual.amount)
       : (Number(row.daily_accrual) || 0);
-    const dailyAmort = Number(row.daily_amortization) || 0;
-
-    // Cumulative amortization from purchase date (value_date) to asAtDate (or today if missing)
     const effectiveAsAt = asAtDate || new Date().toISOString().split('T')[0];
     const endYmd = clampToYmd(effectiveAsAt);
     const matYmd = clampToYmd(row.maturity_date);
@@ -684,7 +682,46 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
     let holdingDays = startYmd && cappedEnd ? Math.max(0, utcDayDiffSigned(cappedEnd, startYmd)) : 0;
     // Exclude maturity day from cumulative amortization if report date is maturity
     if (matYmd && cappedEnd === matYmd) holdingDays = Math.max(0, holdingDays - 1);
-    const cumulativeAmort = truncate8(dailyAmort * holdingDays);
+
+    // Daily amortisation for the REPORT DATE, recomputed rather than read from
+    // gsec.per_day_amortization. That column holds whatever the last EOD run
+    // wrote, so a dated report would show today's figure against a past date.
+    // Under the NVP basis the daily figure changes every day, so the stored
+    // value would not reconcile to this row's own NVP column - which is exactly
+    // how Finance checks it. Same treatment the daily accrual above already gets.
+    const amortBalance = Number(row.effective_remaining_face ?? row.face_value) || 0;
+    const computedAmort = computeNvpDailyAmortization(
+      {
+        face_value: row.face_value,
+        remaining_face_value: amortBalance,
+        yield: row.yield,
+        coupon_rate: row.coupon_rate,
+        issue_date: row.issue_date,
+        maturity_date: row.maturity_date,
+        coupon_date_1: row.coupon_date_1,
+        coupon_date_2: row.coupon_date_2
+      },
+      effectiveAsAt
+    );
+    // Signed, matching Finance's own formula Balance x (NVP(t) - NVP(t-1)) / 100:
+    // a discount bond pulls up to par (positive), a premium bond pulls down
+    // (negative). Falls back to the stored column only when the row cannot be
+    // priced, so nothing silently reads as zero.
+    const dailyAmort = computedAmort.ok
+      ? computedAmort.signedAmount
+      : (Number(row.daily_amortization) || 0);
+
+    // Cumulative amortisation telescopes into the dailies exactly:
+    //   Balance x ( NVP(asAtDate) - purchase clean price ) / 100
+    // Multiplying one day's figure by holding days - what this used to do - is
+    // only valid while the daily amount is constant, which the NVP basis is not.
+    const nvpAtDate = Number(nvpResult.nvp);
+    const purchaseClean = Number(row.clean_price);
+    const canCumulate =
+      holdingDays > 0 && Number.isFinite(nvpAtDate) && Number.isFinite(purchaseClean) && amortBalance > 0;
+    const cumulativeAmort = canCumulate
+      ? truncate8((amortBalance * (nvpAtDate - purchaseClean)) / 100)
+      : truncate8(dailyAmort * holdingDays);
 
     // Cumulative accrual since purchase date up to asAtDate (scaled to remaining face as at report)
     let cumulativeAccrual = 0;
