@@ -3363,6 +3363,7 @@ const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
 
         const [rows] = await connection.query(
           `SELECT id, deal_number, leg1_value_date, leg1_settlement_amount, leg1_face_value,
+                  leg1_clean_price, leg1_dirty_price, leg1_yield_rate,
                   leg2_face_value, leg2_adjusted_face_value, leg2_value_date, leg2_transaction_type,
                   leg2_isin, leg2_counterparty, leg2_portfolio, leg2_strategy, leg2_custodian, leg2_settlement_mode,
                   leg2_trade_type, leg2_trade_date, leg2_currency, leg1_broker, leg1_brokerage,
@@ -3401,7 +3402,42 @@ const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
         const interest = leg1Settlement * (rate / 100) * (days / basis);
         const newLeg2Settlement = Math.round((leg1Settlement + interest) * 100) / 100;
 
-        const dirtyPricePer100 = calcDirtyPricePer100(newLeg2Settlement, deal.leg1_face_value);
+        // Repurchase price = sale price grown by the financing rate, which is the
+        // standard repo relationship and makes days = 0 a genuine no-op.
+        //
+        // This used to rebuild the price from newLeg2Settlement / leg1_face_value.
+        // That silently inherits any disagreement between leg1_settlement_amount
+        // and leg1_dirty_price: on BB20260812002 the settlement implied 95.7712
+        // against a stored leg1 dirty of 95.7400, so a SAME-DAY premature maturity
+        // still moved the clean price by 0.0312 and the yield from 12.3717 to
+        // 12.3642 - with zero days of interest to justify it.
+        //
+        // The cash side is unchanged: leg2_settlement_amount is still
+        // leg1_settlement + interest, because that is what actually moves.
+        const leg1DirtyPer100 = parseFloat(deal.leg1_dirty_price);
+        const growth = 1 + (rate / 100) * (days / basis);
+        const settlementDerivedDirty = calcDirtyPricePer100(newLeg2Settlement, deal.leg1_face_value);
+
+        let dirtyPricePer100;
+        if (isFinite(leg1DirtyPer100) && leg1DirtyPer100 > 0) {
+          dirtyPricePer100 = round4(leg1DirtyPer100 * growth);
+          // Worth knowing about: the deal's own cash and price disagree, which is
+          // a data problem on the leg-1 capture rather than anything this routine
+          // can resolve.
+          if (
+            settlementDerivedDirty != null &&
+            Math.abs(settlementDerivedDirty - dirtyPricePer100) > 0.01
+          ) {
+            console.warn(
+              `Premature maturity ${deal.deal_number}: leg1 settlement implies dirty ` +
+                `${settlementDerivedDirty.toFixed(4)} but leg1_dirty_price x financing gives ` +
+                `${dirtyPricePer100.toFixed(4)}. Using the price; leg-1 cash and price disagree.`
+            );
+          }
+        } else {
+          // No usable leg-1 price - fall back to the old behaviour rather than fail.
+          dirtyPricePer100 = settlementDerivedDirty;
+        }
 
         // buyback_deals.coupon_* columns are usually NULL, so fall back to the ISIN
         // master coupon calendar. Without this, calcAccruedInterestPer100 returns null
