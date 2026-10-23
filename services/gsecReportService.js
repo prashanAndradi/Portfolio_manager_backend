@@ -729,8 +729,35 @@ exports.getGsecReport = async ({ asAtDate, portfolio, isin, valueDate, maturityD
       const effectiveFace = Number(row.effective_remaining_face ?? row.face_value) || 0;
       const effectiveCouponInterest = periodCouponOnFace(effectiveFace, row.coupon_rate, row.coupon_interest, row.face_value);
 
-      const accStart = startYmd;
       const accEnd = cappedEnd;
+
+      // Accrual RESTARTS at each coupon payment. Once a coupon is received the
+      // accrued-interest receivable is cleared by the cash, so carrying the
+      // balance forward across coupon dates double-counts interest already in
+      // the bank. This used to run from the purchase date through every coupon
+      // period, which overstated the cumulative figure on every holding that
+      // had received a coupon - 123 of 156 deals, by LKR 17.8m in total.
+      //
+      // Anchor to the later of the purchase date and the most recent coupon on
+      // or before the report date, which is the basis Finance reconciles to.
+      let accStart = startYmd;
+      try {
+        const { coupon_date_1: ac1, coupon_date_2: ac2 } = resolveIsinCouponDates({
+          isin_number: row.isin,
+          coupon_date_1: row.coupon_date_1,
+          coupon_date_2: row.coupon_date_2
+        });
+        const periodAtAsAt = getCouponPeriodLengthDaysFromIsinSchedule(accEnd, matYmd, ac1, ac2);
+        if (periodAtAsAt && periodAtAsAt.lastCoupon) {
+          const lc = periodAtAsAt.lastCoupon;
+          // Local Y/M/D, not toISOString: in a positive-offset timezone that
+          // would shift the coupon back a day and add a day of accrual.
+          const lcYmd = `${lc.getFullYear()}-${String(lc.getMonth() + 1).padStart(2, '0')}-${String(lc.getDate()).padStart(2, '0')}`;
+          if (lcYmd > accStart) accStart = lcYmd;
+        }
+      } catch (_) {
+        // Leave accStart at the purchase date if the coupon calendar is unusable.
+      }
       if (effectiveCouponInterest > 0 && accStart && accEnd && accEnd > accStart && matYmd) {
         let cursor = accStart;
         const maxIters = 20; // safety (semiannual; 10y => 20 periods)
