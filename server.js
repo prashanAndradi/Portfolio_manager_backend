@@ -7,8 +7,11 @@ const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
 
-// Load environment variables
-dotenv.config();
+// Load environment variables. Reads the .env in the working directory AND the
+// one beside server.js, because a process manager may start the app from a
+// different directory than the one the file was edited in - see config/envLoad.js.
+const envLoad = require('./config/envLoad');
+envLoad.load();
 
 // Create Express app
 const app = express();
