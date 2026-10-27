@@ -136,6 +136,17 @@ router.get('/health', checkAuth, checkAdmin, async (req, res) => {
     configured: isConfigured(),
     email: process.env.EXTERNAL_ACCOUNTING_API_EMAIL || null,
     passwordSet: Boolean(process.env.EXTERNAL_ACCOUNTING_API_PASSWORD),
+    // Where this process reads configuration from, and which source supplied
+    // each key. Names and paths only - no values. DB_HOST is included as a
+    // control: it is known to be set, so whichever source provides it is the
+    // source the two missing keys must be added to.
+    env: require('../config/envLoad').describe([
+      'EXTERNAL_ACCOUNTING_API_EMAIL',
+      'EXTERNAL_ACCOUNTING_API_PASSWORD',
+      'EXTERNAL_ACCOUNTING_API_BASE_URL',
+      'DB_HOST',
+      'JWT_SECRET'
+    ]),
     login: null,
     trialBalance: null
   };
