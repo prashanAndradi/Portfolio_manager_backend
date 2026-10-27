@@ -303,7 +303,17 @@ const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
-  
+
+  // Surface a missing external-accounting config at boot. It is set outside the
+  // repo (per-environment), so without this the first sign of it is a user
+  // clicking Generate Report on Trial Balance or GSec Balance Sheet.
+  if (!require('./services/externalAccountingAuthService').isConfigured()) {
+    console.warn(
+      'WARNING: EXTERNAL_ACCOUNTING_API_EMAIL / EXTERNAL_ACCOUNTING_API_PASSWORD are not set. ' +
+        'Trial Balance and GSec Balance Sheet will fail until they are. See .env.example.'
+    );
+  }
+
   // Database verification
   const db = require('./config/database');
   console.log('Checking database tables on startup...');
