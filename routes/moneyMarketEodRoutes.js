@@ -977,7 +977,16 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
       `SELECT g.id, g.deal_number, g.isin_number, g.value_date, g.maturity_date, g.face_value,
               g.remaining_face_value, g.coupon_interest, g.settlement_mode,
               g.accrued_interest, g.clean_price, g.dirty_price,
-              im.coupon_rate, ics.coupon_date, ics.coupon_amount
+              im.coupon_rate, ics.coupon_date, ics.coupon_amount,
+              COALESCE((
+                SELECT SUM(s.face_value)
+                FROM gsec s
+                WHERE s.transaction_type = 'Sell'
+                  AND s.buy_deal_number IS NOT NULL
+                  AND TRIM(s.buy_deal_number) = TRIM(g.deal_number)
+                  AND s.value_date IS NOT NULL
+                  AND DATE(s.value_date) <= DATE(?)
+              ), 0) AS linked_sold_face_value
        FROM gsec g
        JOIN isin_coupon_schedule ics
          ON ics.isin COLLATE utf8mb4_unicode_ci = g.isin_number COLLATE utf8mb4_unicode_ci
@@ -989,8 +998,43 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
          AND COALESCE(g.matured, 0) = 0
          AND DATE(g.value_date) <= DATE(?)
          AND DATE(g.maturity_date) >= DATE(?)
-         AND COALESCE(g.remaining_face_value, g.face_value, 0) > 0`,
-      [systemDay, systemDay, systemDay]
+         AND (
+           COALESCE(g.remaining_face_value, g.face_value, 0) > 0
+           -- A sell or buyback that is approved but NOT yet value-dated has
+           -- already written remaining_face_value down. The holding is still
+           -- owned on the coupon date, so it must stay a candidate - the loop
+           -- re-derives the true balance and skips it if genuinely flat.
+           --
+           -- Without this, a holding sold forward before EOD ran lost its
+           -- coupon entirely: on 15-Oct-2026 three sells value-dated the 19th
+           -- were approved that morning, so 20260915/GSEC/0002 was skipped,
+           -- Accrued Coupon Paid at Purchase was never cleared, and the later
+           -- sale cleared 4,965,707.89 off account 128 instead of 128,600.00
+           -- off 116 - pushing 4.8m into Capital Gain.
+           OR EXISTS (
+             SELECT 1 FROM gsec s_pending
+             WHERE s_pending.transaction_type = 'Sell'
+               AND s_pending.buyback_deal_id IS NULL
+               AND s_pending.value_date IS NOT NULL
+               AND DATE(s_pending.value_date) > DATE(?)
+               AND (
+                 TRIM(COALESCE(s_pending.buy_deal_number, '')) = TRIM(g.deal_number)
+                 OR s_pending.sell_deal_allocations LIKE CONCAT('%', TRIM(g.deal_number), '%')
+               )
+           )
+           OR EXISTS (
+             SELECT 1 FROM buyback_deals bd_pending
+             WHERE bd_pending.deal_status = 'Approved'
+               AND bd_pending.leg1_transaction_type = 'Sell'
+               AND bd_pending.leg1_value_date IS NOT NULL
+               AND DATE(bd_pending.leg1_value_date) > DATE(?)
+               AND (
+                 TRIM(COALESCE(bd_pending.source_buy_deal_number, '')) = TRIM(g.deal_number)
+                 OR bd_pending.sell_deal_allocations LIKE CONCAT('%', TRIM(g.deal_number), '%')
+               )
+           )
+         )`,
+      [systemDay, systemDay, systemDay, systemDay, systemDay, systemDay]
     );
     const [alreadyPostedCouponRows] = await db.query(
       `SELECT deal_number, description
@@ -1004,6 +1048,34 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
     );
     const settlementAccountCache = new Map();
 
+    // pendingSoldByDeal / pendingBuybackByDeal above are built from the accrual
+    // and amortisation candidate lists, which are resolved before the coupon
+    // query runs. A holding can be due a coupon without appearing in either, so
+    // top up the forward-dated add-backs for anything still missing - otherwise
+    // such a deal would be re-admitted by the widened WHERE above and then
+    // immediately skipped again for a zero balance.
+    try {
+      const couponDealNumbers = [
+        ...new Set((dueCouponDeals || []).map((d) => String(d.deal_number || '').trim()).filter(Boolean))
+      ];
+      const missing = couponDealNumbers.filter(
+        (dn) => pendingSoldByDeal[dn] === undefined && pendingBuybackByDeal[dn] === undefined
+      );
+      if (missing.length) {
+        const soldToDate = await buildSoldByDealMap(db, missing, systemDay);
+        const soldEver = await buildSoldByDealMap(db, missing, null);
+        for (const dn of missing) {
+          const diff = Number(soldEver[dn] || 0) - Number(soldToDate[dn] || 0);
+          if (diff > 0) pendingSoldByDeal[dn] = diff;
+        }
+      }
+    } catch (couponPendingErr) {
+      console.warn(
+        'Failed to top up forward-dated sells for GSec coupon posting (continuing without add-back):',
+        couponPendingErr.message
+      );
+    }
+
     for (const deal of dueCouponDeals) {
       try {
         const couponDateStr = new Date(deal.coupon_date).toISOString().slice(0, 10);
@@ -1014,7 +1086,22 @@ router.post('/eod', checkAuth, checkAdmin, async (req, res) => {
           continue;
         }
 
-        const amount = computeGsecCouponSettlementAmount(deal);
+        // Balance actually held on the coupon date: adds back sells and buyback
+        // legs that are approved but not yet value-dated, the same way the daily
+        // accrual and amortisation postings do.
+        const dnForCoupon = String(deal.deal_number || '').trim();
+        const effectiveRemainingCoupon = resolveGsecRemainingForDailyPosting(deal, {
+          linked_buyback_face_value: Number(buybackByDealForAccrual[dnForCoupon] || 0),
+          pending_buyback_face_value: Number(pendingBuybackByDeal[dnForCoupon] || 0),
+          pending_sold_face_value: Number(pendingSoldByDeal[dnForCoupon] || 0)
+        });
+        if (effectiveRemainingCoupon <= 0) {
+          continue;
+        }
+
+        const amount = computeGsecCouponSettlementAmount(
+          Object.assign({}, deal, { remaining_face_value: effectiveRemainingCoupon })
+        );
         if (!Number.isFinite(amount) || amount <= 0) {
           continue;
         }
@@ -1607,3 +1694,10 @@ router.get('/daily-interest', checkAuth, async (req, res) => {
 });
 
 module.exports = router;
+
+// Exported so the coupon-repair script posts through the SAME logic EOD uses,
+// rather than a copy that can drift from it.
+module.exports.postGsecCouponSettlementDirect = postGsecCouponSettlementDirect;
+module.exports.computeAccruedAtPurchaseClearAmount = computeAccruedAtPurchaseClearAmount;
+module.exports.isFirstCouponAfterPurchase = isFirstCouponAfterPurchase;
+module.exports.computeGsecCouponSettlementAmount = computeGsecCouponSettlementAmount;
