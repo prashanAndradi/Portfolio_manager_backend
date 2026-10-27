@@ -311,10 +311,21 @@ app.listen(PORT, () => {
   // repo (per-environment), so without this the first sign of it is a user
   // clicking Generate Report on Trial Balance or GSec Balance Sheet.
   if (!require('./services/externalAccountingAuthService').isConfigured()) {
+    const env = envLoad.describe(['DB_HOST', 'JWT_SECRET']);
     console.warn(
       'WARNING: EXTERNAL_ACCOUNTING_API_EMAIL / EXTERNAL_ACCOUNTING_API_PASSWORD are not set. ' +
         'Trial Balance and GSec Balance Sheet will fail until they are. See .env.example.'
     );
+    console.warn(`  working directory : ${env.cwd}`);
+    console.warn(`  app directory     : ${env.appDir}`);
+    env.files.forEach((f) =>
+      console.warn(
+        `  .env (${f.label}) : ${f.path} - ${f.exists ? `found, ${f.keyCount} key(s)` : 'NOT FOUND'}`
+      )
+    );
+    // DB_HOST is set (the app has a working database), so whichever source
+    // supplies it is the source the two missing keys must be added to.
+    console.warn(`  DB_HOST comes from: ${env.origins.DB_HOST}  <-- add the two keys there`);
   }
 
   // Database verification
