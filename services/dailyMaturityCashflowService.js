@@ -10,6 +10,7 @@
 const db = require('../config/database');
 const Gsec = require('../models/gsec');
 const { getSystemDay } = require('../models/systemDayModel');
+const { buildSoldByDealMap } = require('./gsecSellDeductionService');
 
 const BANK_KEYS = ['cbsl', 'fmc', 'nsb', 'boc'];
 
@@ -579,8 +580,20 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
       g.buy_deal_number,
       g.buyback_deal_id,
       g.status AS deal_status,
+      -- Marks a GSec row that IS the buyback's leg-2 settlement. queryBuyback
+      -- already lists that buyback's maturity for the same date and the same
+      -- cash, so listing this row too double-counts it. Matched on leg-2 value
+      -- date AND direction so a leg-1 row (or a same-day buyback's other leg)
+      -- is never caught by mistake.
+      CASE
+        WHEN bb2.id IS NOT NULL
+         AND DATE(bb2.leg2_value_date) = DATE(g.value_date)
+         AND LOWER(COALESCE(bb2.leg2_transaction_type, '')) = LOWER(COALESCE(g.transaction_type, ''))
+        THEN 1 ELSE 0
+      END AS is_buyback_leg2,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, g.counterparty_id) AS counterparty_name
     FROM gsec g
+    LEFT JOIN buyback_deals bb2 ON bb2.id = g.buyback_deal_id
     LEFT JOIN counterparty_master_corporate corp ON
       (g.counterparty_id LIKE 'c%' AND CAST(SUBSTRING(g.counterparty_id, 2) AS UNSIGNED) = corp.id)
       OR (g.counterparty_id = corp.id)
@@ -626,9 +639,149 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
       status: row.deal_status || 'final_approved',
       approval_level: 'not_initiated',
       approval_level_display: 'Settled',
-      is_selectable: false
+      is_selectable: false,
+      buyback_deal_id: row.buyback_deal_id || null,
+      is_buyback_leg2: Number(row.is_buyback_leg2) === 1
     };
   });
+}
+
+/**
+ * Coupon receipts falling on the date - cash in, and the other half of a day's
+ * cashflow that maturities and settlements alone do not cover.
+ *
+ * Sourced from the same query EOD uses to post `GSec Coupon Settlement ...`
+ * (isin_coupon_schedule joined to live holdings), so the blotter shows what EOD
+ * will post before it runs and agrees with the ledger afterwards. Deriving it
+ * from posted ledger entries instead would leave the blotter blank for today
+ * until EOD had run, which defeats the point of a cashflow blotter.
+ *
+ * One coupon is paid per holding on the balance held, so a part-sold holding
+ * receives the coupon on what is left.
+ */
+/**
+ * Coupon receipts falling on the date - cash in, and the half of a day's
+ * cashflow that maturities and settlements do not cover.
+ *
+ * Sourced from the T Bond report rather than re-derived here. The coupon is
+ * paid on the balance held ON the coupon date, and resolving that balance means
+ * unwinding sells, multi-lot allocations and open buyback legs as at that date -
+ * logic the report already implements and Finance already reconciles to.
+ * Hand-rolling it here produced 11.8m and then 116m against a true 38.17m,
+ * because each attempt missed a different deduction.
+ *
+ * The report treats the coupon date as the holding's `last_coupon_date` once
+ * reached, and `coupon_interest` is that coupon on the effective balance.
+ */
+async function queryGsecCoupons(dateStr, settlementByCode) {
+  // Cheap gate first. The report call below costs ~12s, and most days have no
+  // coupon at all - without this every day would pay for a question whose
+  // answer is almost always "none".
+  try {
+    const [any] = await db.query(
+      'SELECT 1 FROM isin_coupon_schedule WHERE DATE(coupon_date) = DATE(?) LIMIT 1',
+      [dateStr]
+    );
+    if (!any || !any.length) return [];
+  } catch (err) {
+    console.warn('Coupon query: coupon calendar unreadable:', err.message);
+    return [];
+  }
+
+  let reportRows = [];
+  try {
+    // Required late: gsecReportService pulls in a large dependency graph and is
+    // only needed when settlements are switched on.
+    const { getGsecReport } = require('./gsecReportService');
+    const res = await getGsecReport({ asAtDate: dateStr, page: 1, pageSize: 5000 });
+    reportRows = res.rows || res.data || [];
+  } catch (err) {
+    console.warn('Coupon query: T Bond report unavailable, no coupon rows:', err.message);
+    return [];
+  }
+
+  const num = (v) => Number(String(v == null ? 0 : v).replace(/,/g, '')) || 0;
+  const due = reportRows.filter((r) => String(r.last_coupon_date || '').slice(0, 10) === dateStr);
+  if (!due.length) return [];
+
+  // The report does not carry settlement_mode, so the bank attribution comes
+  // from the deals themselves.
+  const modeByDeal = {};
+  try {
+    const dealNumbers = [...new Set(due.map((r) => String(r.deal_number || '').trim()).filter(Boolean))];
+    if (dealNumbers.length) {
+      const [modeRows] = await db.query(
+        'SELECT deal_number, settlement_mode FROM gsec WHERE deal_number IN (?)',
+        [dealNumbers]
+      );
+      for (const m of modeRows || []) modeByDeal[String(m.deal_number).trim()] = m.settlement_mode;
+    }
+  } catch (err) {
+    console.warn('Coupon query: settlement mode lookup failed:', err.message);
+  }
+
+  // One row per ISIN, not per deal: the coupon arrives as a single receipt for
+  // the whole holding of a security. Bank amounts are merged rather than taken
+  // from one deal, since an ISIN can be held across several settlement accounts.
+  const byIsin = new Map();
+  for (const row of due) {
+    const amount = num(row.coupon_interest);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const key = String(row.isin || row.deal_number);
+    let agg = byIsin.get(key);
+    if (!agg) {
+      agg = {
+        isin: row.isin,
+        amount: 0,
+        faceValue: 0,
+        dealCount: 0,
+        banks: emptyBankAmounts(),
+        portfolio: row.portfolio,
+        maturity_date: row.maturity_date,
+        status: 'final_approved',
+        settlement_modes: new Set()
+      };
+      byIsin.set(key, agg);
+    }
+    const mode = modeByDeal[String(row.deal_number || '').trim()];
+    agg.amount += amount;
+    agg.faceValue += num(row.available_balance || row.balance || row.face_value);
+    agg.dealCount += 1;
+    agg.settlement_modes.add(String(mode || ''));
+    const legBanks = withBankAmount(mode, amount, settlementByCode);
+    for (const bankKey of BANK_KEYS) agg.banks[bankKey] += legBanks[bankKey] || 0;
+  }
+
+  return [...byIsin.values()].map((agg, idx) => ({
+    id: `gsec-cpn-${agg.isin || idx}`,
+    deal_number: agg.isin,
+    deal_type: 'gsec',
+    event_type: 'coupon',
+    instrument: 'GSEC',
+    cash_flow: 'Add',
+    description:
+      agg.dealCount > 1
+        ? `Coupon Receipt - ${agg.isin} (${agg.dealCount} holdings)`
+        : `Coupon Receipt - ${agg.isin}`,
+    reference_deal_number: null,
+    isin: agg.isin,
+    portfolio: agg.portfolio,
+    counterparty: '',
+    face_value: agg.faceValue,
+    interest_amount: agg.amount,
+    maturity_amount: agg.amount,
+    maturity_date: agg.maturity_date,
+    value_date: dateStr,
+    days_to_maturity: 0,
+    val_mat: 'Coupon Date',
+    settlement_mode: agg.settlement_modes.size === 1 ? [...agg.settlement_modes][0] : null,
+    banks: agg.banks,
+    deal_count: agg.dealCount,
+    status: agg.status,
+    approval_level: 'not_initiated',
+    approval_level_display: 'Coupon',
+    is_selectable: false
+  }));
 }
 
 async function queryRepoSettlements(dateStr, settlementByCode) {
@@ -815,11 +968,46 @@ async function getDailyMaturityCashflow(dateStr, options = {}) {
         wantMM ? queryMoneyMarketSettlements(selectedYmd, settlementByCode) : [],
         wantGsec ? queryGsecSettlements(selectedYmd, settlementByCode) : [],
         wantRepo ? queryRepoSettlements(selectedYmd, settlementByCode) : [],
-        wantBuyback ? queryBuybackLeg1Settlements(selectedYmd, settlementByCode) : []
+        wantBuyback ? queryBuybackLeg1Settlements(selectedYmd, settlementByCode) : [],
+        // Coupon receipts are cash in regardless of which product filter is on -
+        // they belong to GSec holdings, so they follow the gsec switch.
+        wantGsec ? queryGsecCoupons(selectedYmd, settlementByCode) : []
       ])
     : [];
 
   let rows = [...maturityChunks, ...settlementChunks].flat().map(withSettlementValue);
+
+  // A Sell/Buy buyback's leg 2 creates a GSec deal carrying the same cash as the
+  // buyback's own maturity row, so both were being listed and the day's outflow
+  // was counted twice (15-Oct-2026: three pairs, 44,388,443.90 double-counted).
+  //
+  // Drop the GSec side and keep the maturity row: the maturity row is what
+  // Maturity Handling shows, and suppressing that instead would change a screen
+  // this does not own. The mirror of the guard queryBuybackLeg1Settlements
+  // already applies in the other direction for leg 1.
+  //
+  // Keyed off maturity rows ACTUALLY produced rather than the buyback table, so
+  // if a maturity row is ever filtered out the GSec row still carries the cash
+  // instead of the day silently losing it.
+  if (includeSettlements) {
+    const maturedBuybackIds = new Set(
+      rows
+        .filter((r) => r.deal_type === 'buyback' && r.event_type === 'maturity')
+        .map((r) => Number(r.id))
+        .filter((id) => Number.isFinite(id))
+    );
+    if (maturedBuybackIds.size) {
+      rows = rows.filter(
+        (r) =>
+          !(
+            r.event_type === 'settlement' &&
+            r.deal_type === 'gsec' &&
+            r.is_buyback_leg2 &&
+            maturedBuybackIds.has(Number(r.buyback_deal_id))
+          )
+      );
+    }
+  }
 
   // Stable unique key so the same deal can appear as maturity + settlement without collapsing.
   const seen = new Set();
