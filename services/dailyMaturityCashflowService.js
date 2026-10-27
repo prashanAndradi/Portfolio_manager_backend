@@ -10,6 +10,7 @@
 const db = require('../config/database');
 const Gsec = require('../models/gsec');
 const { getSystemDay } = require('../models/systemDayModel');
+const { buildSoldByDealMap } = require('./gsecSellDeductionService');
 
 const BANK_KEYS = ['cbsl', 'fmc', 'nsb', 'boc'];
 
@@ -645,6 +646,144 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
   });
 }
 
+/**
+ * Coupon receipts falling on the date - cash in, and the other half of a day's
+ * cashflow that maturities and settlements alone do not cover.
+ *
+ * Sourced from the same query EOD uses to post `GSec Coupon Settlement ...`
+ * (isin_coupon_schedule joined to live holdings), so the blotter shows what EOD
+ * will post before it runs and agrees with the ledger afterwards. Deriving it
+ * from posted ledger entries instead would leave the blotter blank for today
+ * until EOD had run, which defeats the point of a cashflow blotter.
+ *
+ * One coupon is paid per holding on the balance held, so a part-sold holding
+ * receives the coupon on what is left.
+ */
+/**
+ * Coupon receipts falling on the date - cash in, and the half of a day's
+ * cashflow that maturities and settlements do not cover.
+ *
+ * Sourced from the T Bond report rather than re-derived here. The coupon is
+ * paid on the balance held ON the coupon date, and resolving that balance means
+ * unwinding sells, multi-lot allocations and open buyback legs as at that date -
+ * logic the report already implements and Finance already reconciles to.
+ * Hand-rolling it here produced 11.8m and then 116m against a true 38.17m,
+ * because each attempt missed a different deduction.
+ *
+ * The report treats the coupon date as the holding's `last_coupon_date` once
+ * reached, and `coupon_interest` is that coupon on the effective balance.
+ */
+async function queryGsecCoupons(dateStr, settlementByCode) {
+  // Cheap gate first. The report call below costs ~12s, and most days have no
+  // coupon at all - without this every day would pay for a question whose
+  // answer is almost always "none".
+  try {
+    const [any] = await db.query(
+      'SELECT 1 FROM isin_coupon_schedule WHERE DATE(coupon_date) = DATE(?) LIMIT 1',
+      [dateStr]
+    );
+    if (!any || !any.length) return [];
+  } catch (err) {
+    console.warn('Coupon query: coupon calendar unreadable:', err.message);
+    return [];
+  }
+
+  let reportRows = [];
+  try {
+    // Required late: gsecReportService pulls in a large dependency graph and is
+    // only needed when settlements are switched on.
+    const { getGsecReport } = require('./gsecReportService');
+    const res = await getGsecReport({ asAtDate: dateStr, page: 1, pageSize: 5000 });
+    reportRows = res.rows || res.data || [];
+  } catch (err) {
+    console.warn('Coupon query: T Bond report unavailable, no coupon rows:', err.message);
+    return [];
+  }
+
+  const num = (v) => Number(String(v == null ? 0 : v).replace(/,/g, '')) || 0;
+  const due = reportRows.filter((r) => String(r.last_coupon_date || '').slice(0, 10) === dateStr);
+  if (!due.length) return [];
+
+  // The report does not carry settlement_mode, so the bank attribution comes
+  // from the deals themselves.
+  const modeByDeal = {};
+  try {
+    const dealNumbers = [...new Set(due.map((r) => String(r.deal_number || '').trim()).filter(Boolean))];
+    if (dealNumbers.length) {
+      const [modeRows] = await db.query(
+        'SELECT deal_number, settlement_mode FROM gsec WHERE deal_number IN (?)',
+        [dealNumbers]
+      );
+      for (const m of modeRows || []) modeByDeal[String(m.deal_number).trim()] = m.settlement_mode;
+    }
+  } catch (err) {
+    console.warn('Coupon query: settlement mode lookup failed:', err.message);
+  }
+
+  // One row per ISIN, not per deal: the coupon arrives as a single receipt for
+  // the whole holding of a security. Bank amounts are merged rather than taken
+  // from one deal, since an ISIN can be held across several settlement accounts.
+  const byIsin = new Map();
+  for (const row of due) {
+    const amount = num(row.coupon_interest);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const key = String(row.isin || row.deal_number);
+    let agg = byIsin.get(key);
+    if (!agg) {
+      agg = {
+        isin: row.isin,
+        amount: 0,
+        faceValue: 0,
+        dealCount: 0,
+        banks: emptyBankAmounts(),
+        portfolio: row.portfolio,
+        maturity_date: row.maturity_date,
+        status: 'final_approved',
+        settlement_modes: new Set()
+      };
+      byIsin.set(key, agg);
+    }
+    const mode = modeByDeal[String(row.deal_number || '').trim()];
+    agg.amount += amount;
+    agg.faceValue += num(row.available_balance || row.balance || row.face_value);
+    agg.dealCount += 1;
+    agg.settlement_modes.add(String(mode || ''));
+    const legBanks = withBankAmount(mode, amount, settlementByCode);
+    for (const bankKey of BANK_KEYS) agg.banks[bankKey] += legBanks[bankKey] || 0;
+  }
+
+  return [...byIsin.values()].map((agg, idx) => ({
+    id: `gsec-cpn-${agg.isin || idx}`,
+    deal_number: agg.isin,
+    deal_type: 'gsec',
+    event_type: 'coupon',
+    instrument: 'GSEC',
+    cash_flow: 'Add',
+    description:
+      agg.dealCount > 1
+        ? `Coupon Receipt - ${agg.isin} (${agg.dealCount} holdings)`
+        : `Coupon Receipt - ${agg.isin}`,
+    reference_deal_number: null,
+    isin: agg.isin,
+    portfolio: agg.portfolio,
+    counterparty: '',
+    face_value: agg.faceValue,
+    interest_amount: agg.amount,
+    maturity_amount: agg.amount,
+    maturity_date: agg.maturity_date,
+    value_date: dateStr,
+    days_to_maturity: 0,
+    val_mat: 'Coupon Date',
+    settlement_mode: agg.settlement_modes.size === 1 ? [...agg.settlement_modes][0] : null,
+    banks: agg.banks,
+    deal_count: agg.dealCount,
+    status: agg.status,
+    approval_level: 'not_initiated',
+    approval_level_display: 'Coupon',
+    is_selectable: false
+  }));
+}
+
 async function queryRepoSettlements(dateStr, settlementByCode) {
   // Start-leg cash on value date. Opposite of maturity cash direction.
   const [rows] = await db.query(
@@ -829,7 +968,10 @@ async function getDailyMaturityCashflow(dateStr, options = {}) {
         wantMM ? queryMoneyMarketSettlements(selectedYmd, settlementByCode) : [],
         wantGsec ? queryGsecSettlements(selectedYmd, settlementByCode) : [],
         wantRepo ? queryRepoSettlements(selectedYmd, settlementByCode) : [],
-        wantBuyback ? queryBuybackLeg1Settlements(selectedYmd, settlementByCode) : []
+        wantBuyback ? queryBuybackLeg1Settlements(selectedYmd, settlementByCode) : [],
+        // Coupon receipts are cash in regardless of which product filter is on -
+        // they belong to GSec holdings, so they follow the gsec switch.
+        wantGsec ? queryGsecCoupons(selectedYmd, settlementByCode) : []
       ])
     : [];
 
