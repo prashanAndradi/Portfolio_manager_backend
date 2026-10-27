@@ -579,8 +579,20 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
       g.buy_deal_number,
       g.buyback_deal_id,
       g.status AS deal_status,
+      -- Marks a GSec row that IS the buyback's leg-2 settlement. queryBuyback
+      -- already lists that buyback's maturity for the same date and the same
+      -- cash, so listing this row too double-counts it. Matched on leg-2 value
+      -- date AND direction so a leg-1 row (or a same-day buyback's other leg)
+      -- is never caught by mistake.
+      CASE
+        WHEN bb2.id IS NOT NULL
+         AND DATE(bb2.leg2_value_date) = DATE(g.value_date)
+         AND LOWER(COALESCE(bb2.leg2_transaction_type, '')) = LOWER(COALESCE(g.transaction_type, ''))
+        THEN 1 ELSE 0
+      END AS is_buyback_leg2,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, g.counterparty_id) AS counterparty_name
     FROM gsec g
+    LEFT JOIN buyback_deals bb2 ON bb2.id = g.buyback_deal_id
     LEFT JOIN counterparty_master_corporate corp ON
       (g.counterparty_id LIKE 'c%' AND CAST(SUBSTRING(g.counterparty_id, 2) AS UNSIGNED) = corp.id)
       OR (g.counterparty_id = corp.id)
@@ -626,7 +638,9 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
       status: row.deal_status || 'final_approved',
       approval_level: 'not_initiated',
       approval_level_display: 'Settled',
-      is_selectable: false
+      is_selectable: false,
+      buyback_deal_id: row.buyback_deal_id || null,
+      is_buyback_leg2: Number(row.is_buyback_leg2) === 1
     };
   });
 }
@@ -820,6 +834,38 @@ async function getDailyMaturityCashflow(dateStr, options = {}) {
     : [];
 
   let rows = [...maturityChunks, ...settlementChunks].flat().map(withSettlementValue);
+
+  // A Sell/Buy buyback's leg 2 creates a GSec deal carrying the same cash as the
+  // buyback's own maturity row, so both were being listed and the day's outflow
+  // was counted twice (15-Oct-2026: three pairs, 44,388,443.90 double-counted).
+  //
+  // Drop the GSec side and keep the maturity row: the maturity row is what
+  // Maturity Handling shows, and suppressing that instead would change a screen
+  // this does not own. The mirror of the guard queryBuybackLeg1Settlements
+  // already applies in the other direction for leg 1.
+  //
+  // Keyed off maturity rows ACTUALLY produced rather than the buyback table, so
+  // if a maturity row is ever filtered out the GSec row still carries the cash
+  // instead of the day silently losing it.
+  if (includeSettlements) {
+    const maturedBuybackIds = new Set(
+      rows
+        .filter((r) => r.deal_type === 'buyback' && r.event_type === 'maturity')
+        .map((r) => Number(r.id))
+        .filter((id) => Number.isFinite(id))
+    );
+    if (maturedBuybackIds.size) {
+      rows = rows.filter(
+        (r) =>
+          !(
+            r.event_type === 'settlement' &&
+            r.deal_type === 'gsec' &&
+            r.is_buyback_leg2 &&
+            maturedBuybackIds.has(Number(r.buyback_deal_id))
+          )
+      );
+    }
+  }
 
   // Stable unique key so the same deal can appear as maturity + settlement without collapsing.
   const seen = new Set();
