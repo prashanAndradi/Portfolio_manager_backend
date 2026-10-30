@@ -3252,7 +3252,11 @@ const {
   resolveIsinCouponDates,
   getCouponPeriodEOverride
 } = require('../services/gsecCouponPeriod');
-const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
+const { solveYieldFromPrice, calculateNVP } = require('../utils/bondPricingNVP');
+const {
+  resolveLeg1BaseDirty,
+  DEFAULT_TOLERANCE_PER_100
+} = require('../services/buybackPrematurePricing');
     const { deals } = req.body || {};
     const userId = resolveRequestUserId(req);
     const [buybackLinkColRows] = await db.query(
@@ -3302,6 +3306,46 @@ const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
       const face = parseFloat(faceValue);
       if (!isFinite(settlement) || !isFinite(face) || face <= 0) return null;
       return round4((settlement / face) * 100);
+    };
+
+    // Reprice leg 1 from its OWN yield at its OWN value date. Used only as a
+    // tie-breaker when leg1_dirty_price and leg1_settlement_amount disagree:
+    // it is a third, independent source, so whichever of the two it matches is
+    // the one to trust. Returns null when the inputs are not sufficient to price.
+    const repriceLeg1DirtyPer100 = (deal, isinMaster) => {
+      const yieldRate = parseFloat(deal.leg1_yield_rate);
+      const couponRate = deal.coupon_rate || (isinMaster && isinMaster.coupon_rate);
+      const maturityDate = isinMaster && isinMaster.maturity_date;
+      const issueDate = deal.issue_date || (isinMaster && isinMaster.issue_date);
+      const couponDate1 = deal.coupon_date1 || (isinMaster && isinMaster.coupon_date_1);
+      const couponDate2 = deal.coupon_date2 || (isinMaster && isinMaster.coupon_date_2);
+      if (
+        !isFinite(yieldRate) || yieldRate <= 0 ||
+        !couponRate || !maturityDate || !issueDate || !couponDate1 || !couponDate2 ||
+        !deal.leg1_value_date
+      ) {
+        return null;
+      }
+      try {
+        const priced = calculateNVP({
+          faceValue: 100,
+          couponRate,
+          yieldRate,
+          systemDate: deal.leg1_value_date,
+          maturityDate,
+          issueDate,
+          couponDate1,
+          couponDate2,
+          quiet: true
+        });
+        const clean = parseFloat(priced && priced.nvp);
+        const accrued = parseFloat(priced && priced.accruedInterest);
+        if (!isFinite(clean) || !isFinite(accrued)) return null;
+        return round4(clean + accrued);
+      } catch (err) {
+        console.warn(`Could not reprice leg 1 of ${deal.deal_number}: ${err.message}`);
+        return null;
+      }
     };
 
     // Mirrors calculateAccruedInterestPer100 in FixedIncomeBuyBackPage.js
@@ -3414,41 +3458,49 @@ const { solveYieldFromPrice } = require('../utils/bondPricingNVP');
         //
         // The cash side is unchanged: leg2_settlement_amount is still
         // leg1_settlement + interest, because that is what actually moves.
-        const leg1DirtyPer100 = parseFloat(deal.leg1_dirty_price);
-        const growth = 1 + (rate / 100) * (days / basis);
-        const settlementDerivedDirty = calcDirtyPricePer100(newLeg2Settlement, deal.leg1_face_value);
-
-        let dirtyPricePer100;
-        if (isFinite(leg1DirtyPer100) && leg1DirtyPer100 > 0) {
-          dirtyPricePer100 = round4(leg1DirtyPer100 * growth);
-          // Worth knowing about: the deal's own cash and price disagree, which is
-          // a data problem on the leg-1 capture rather than anything this routine
-          // can resolve.
-          if (
-            settlementDerivedDirty != null &&
-            Math.abs(settlementDerivedDirty - dirtyPricePer100) > 0.01
-          ) {
-            console.warn(
-              `Premature maturity ${deal.deal_number}: leg1 settlement implies dirty ` +
-                `${settlementDerivedDirty.toFixed(4)} but leg1_dirty_price x financing gives ` +
-                `${dirtyPricePer100.toFixed(4)}. Using the price; leg-1 cash and price disagree.`
-            );
-          }
-        } else {
-          // No usable leg-1 price - fall back to the old behaviour rather than fail.
-          dirtyPricePer100 = settlementDerivedDirty;
-        }
-
         // buyback_deals.coupon_* columns are usually NULL, so fall back to the ISIN
         // master coupon calendar. Without this, calcAccruedInterestPer100 returns null
         // and the code drops to the stored leg2_accrued_interest, which on some legacy
         // rows is a sentinel/garbage value (e.g. 999999.9999) that corrupts the clean
-        // price (clean = dirty - accrued).
+        // price (clean = dirty - accrued). It is read before the price resolution
+        // below because repricing leg 1 needs the same coupon calendar.
         const [leg2IsinMasterRows] = await connection.query(
           'SELECT coupon_rate, issue_date, coupon_date_1, coupon_date_2, maturity_date FROM isin_master WHERE isin_number = ? LIMIT 1',
           [deal.leg2_isin]
         );
         const leg2IsinMaster = (leg2IsinMasterRows && leg2IsinMasterRows[0]) || {};
+
+        const leg1DirtyPer100 = parseFloat(deal.leg1_dirty_price);
+        const growth = 1 + (rate / 100) * (days / basis);
+        const settlementDerivedDirty = calcDirtyPricePer100(newLeg2Settlement, deal.leg1_face_value);
+        const leg1CashDirty = calcDirtyPricePer100(deal.leg1_settlement_amount, deal.leg1_face_value);
+
+        // Only reprice when the stored price and the cash actually disagree -
+        // repricing every deal would spend a bond valuation on the 270-odd that
+        // are already consistent.
+        const needsTieBreak =
+          isFinite(leg1DirtyPer100) && leg1DirtyPer100 > 0 && leg1CashDirty != null &&
+          Math.abs(leg1CashDirty - leg1DirtyPer100) > DEFAULT_TOLERANCE_PER_100;
+
+        const repricedDirty = needsTieBreak ? repriceLeg1DirtyPer100(deal, leg2IsinMaster) : null;
+        const { dirty: leg1BaseDirty, source: leg1BaseSource, disagreed } = resolveLeg1BaseDirty({
+          storedDirty: leg1DirtyPer100,
+          cashDirty: leg1CashDirty,
+          repricedDirty
+        });
+
+        if (disagreed) {
+          console.warn(
+            `Premature maturity ${deal.deal_number}: leg-1 cash implies dirty ` +
+              `${leg1CashDirty.toFixed(4)} but leg1_dirty_price is ${leg1DirtyPer100.toFixed(4)}` +
+              `${repricedDirty != null ? `; repricing at the leg-1 yield gives ${repricedDirty.toFixed(4)}` : '; leg 1 could not be repriced'}. ` +
+              `Using ${leg1BaseSource}.`
+          );
+        }
+
+        // No usable leg-1 price at all - fall back to the old behaviour rather than fail.
+        const dirtyPricePer100 =
+          leg1BaseDirty != null ? round4(leg1BaseDirty * growth) : settlementDerivedDirty;
 
         const computedAccrued = calcAccruedInterestPer100(
           deal.coupon_rate || leg2IsinMaster.coupon_rate,
