@@ -63,7 +63,12 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 function classifyRow(row) {
   const status = normalise(row.status);
   if (DEAD_STATUSES.has(status)) return 'excluded';
-  if (SETTLED_STATUSES.has(status)) return 'settled';
+  // repo_deals.status is the lifecycle ('Pending' until EOD flips it to 'Matured'),
+  // not approval - a fully approved repo is still 'Pending' there. Approval is
+  // approval_status, which is what the Deal Blotter shows.
+  const approval = row.deal_type === 'repo' && row.approval_status ? normalise(row.approval_status) : status;
+  if (DEAD_STATUSES.has(approval)) return 'excluded';
+  if (SETTLED_STATUSES.has(approval)) return 'settled';
   return 'pending';
 }
 
