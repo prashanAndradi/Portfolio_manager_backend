@@ -22,11 +22,17 @@ async function run() {
     [CODE]
   );
   if (!rows.length) {
-    throw new Error(
-      `Missing chart_of_accounts row for ${CODE}. Add "Interest Receivable on Rev Repo with ` +
-      'Banks and Other Financial Institutes" to the chart, then re-run. ' +
-      'This change must not open new GL accounts.'
+    // Must not open a new GL, but an environment whose chart doesn't carry this GL yet
+    // (e.g. UAT) shouldn't block every migration queued behind this one. Skip without
+    // touching the mapping; once the GL exists, run this file directly - it is idempotent:
+    //   node migrations/20260914-add-repo-interest-receivable-mapping.js
+    console.warn(
+      `⚠ SKIPPED: chart_of_accounts has no row for ${CODE} ` +
+      '("Interest Receivable on Rev Repo with Banks and Other Financial Institutes"). ' +
+      `${KEY} mapping was NOT created, so Reverse Repo daily accrual cannot post here until ` +
+      'the GL is added and this migration is run again.'
     );
+    return;
   }
   const description = `${rows[0].name} (daily accrual)`;
 
