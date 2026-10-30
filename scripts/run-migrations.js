@@ -222,7 +222,17 @@ async function executeJsFile(connection, filePath, deferredStatements = []) {
         throw error;
       }
     },
-    getConnection: async () => connection,
+    // The runner uses one bare (non-pooled) connection, which has no working release().
+    // Migrations written against a pool call conn.release() in `finally`, so hand them
+    // the shared connection with release() as a no-op - the runner owns its lifecycle.
+    getConnection: async () =>
+      new Proxy(connection, {
+        get(target, prop) {
+          if (prop === 'release') return () => {};
+          const value = target[prop];
+          return typeof value === 'function' ? value.bind(target) : value;
+        }
+      }),
     end: async () => {},
     pool: connection
   };
