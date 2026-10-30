@@ -196,6 +196,7 @@ async function queryMoneyMarket(dateStr, settlementByCode) {
       mmd.interest_amount,
       mmd.maturity_value,
       mmd.maturity_date,
+      mmd.trade_date,
       mmd.status AS deal_status,
       COALESCE(mmd.matured, 0) AS matured,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, mmd.counterparty_id) AS counterparty_name,
@@ -223,6 +224,7 @@ async function queryMoneyMarket(dateStr, settlementByCode) {
     const cp = row.counterparty_name || '';
     return {
       id: row.id || `mm-${idx}`,
+      trade_date: row.trade_date || null,
       deal_number: row.deal_number,
       deal_type: 'money_market',
       event_type: 'maturity',
@@ -270,6 +272,7 @@ async function queryGsec(dateStr, settlementByCode) {
       g.value_date,
       g.transaction_type,
       g.buy_deal_number,
+      g.trade_date,
       g.status AS deal_status,
       COALESCE(g.matured, 0) AS matured,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, g.counterparty_id) AS counterparty_name,
@@ -305,6 +308,7 @@ async function queryGsec(dateStr, settlementByCode) {
     const cp = row.counterparty_name || '';
     return {
       id: row.id || `gsec-${idx}`,
+      trade_date: row.trade_date || null,
       deal_number: row.deal_number,
       deal_type: 'gsec',
       event_type: 'maturity',
@@ -350,7 +354,9 @@ async function queryRepo(dateStr, settlementByCode) {
       rd.maturity_amount,
       rd.maturity_date,
       rd.value_date,
+      rd.trade_date,
       rd.status AS deal_status,
+      rd.approval_status,
       COALESCE(rd.matured, 0) AS matured,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, rd.counterparty_id) AS counterparty_name,
       COALESCE(mpl.authorization_level, 'not_initiated') AS approval_level,
@@ -381,6 +387,8 @@ async function queryRepo(dateStr, settlementByCode) {
     const cashFlow = isReverse ? 'Add' : 'Less';
     return {
       id: row.id || `repo-${idx}`,
+      trade_date: row.trade_date || null,
+      approval_status: row.approval_status || null,
       deal_number: row.deal_number,
       deal_type: 'repo',
       event_type: 'maturity',
@@ -427,6 +435,7 @@ async function queryBuyback(dateStr, settlementByCode) {
       bb.leg2_settlement_mode,
       bb.leg2_settlement_amount,
       bb.leg2_value_date,
+      bb.leg2_trade_date,
       bb.leg2_accrued_interest,
       bb.source_buy_deal_number,
       COALESCE(bb.leg1_adjusted_face_value, bb.leg1_face_value) AS face_value,
@@ -471,6 +480,7 @@ async function queryBuyback(dateStr, settlementByCode) {
 
     return {
       id: row.id || `bb-${idx}`,
+      trade_date: row.leg2_trade_date || null,
       deal_number: row.deal_number,
       deal_type: 'buyback',
       event_type: 'maturity',
@@ -516,6 +526,7 @@ async function queryMoneyMarketSettlements(dateStr, settlementByCode) {
       mmd.maturity_value,
       mmd.maturity_date,
       mmd.value_date,
+      mmd.trade_date,
       mmd.status AS deal_status,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, mmd.counterparty_id) AS counterparty_name
     FROM money_market_deals mmd
@@ -535,6 +546,7 @@ async function queryMoneyMarketSettlements(dateStr, settlementByCode) {
     const cp = row.counterparty_name || '';
     return {
       id: row.id || `mm-set-${idx}`,
+      trade_date: row.trade_date || null,
       deal_number: row.deal_number,
       deal_type: 'money_market',
       event_type: 'settlement',
@@ -578,6 +590,7 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
       g.value_date,
       g.transaction_type,
       g.buy_deal_number,
+      g.trade_date,
       g.buyback_deal_id,
       g.status AS deal_status,
       -- Marks a GSec row that IS the buyback's leg-2 settlement. queryBuyback
@@ -617,6 +630,7 @@ async function queryGsecSettlements(dateStr, settlementByCode) {
     const isSell = String(row.transaction_type || '').toLowerCase() === 'sell';
     return {
       id: row.id || `gsec-set-${idx}`,
+      trade_date: row.trade_date || null,
       deal_number: row.deal_number,
       deal_type: 'gsec',
       event_type: 'settlement',
@@ -757,6 +771,7 @@ async function queryGsecCoupons(dateStr, settlementByCode) {
     deal_number: agg.isin,
     deal_type: 'gsec',
     event_type: 'coupon',
+    trade_date: null,
     instrument: 'GSEC',
     cash_flow: 'Add',
     description:
@@ -799,7 +814,10 @@ async function queryRepoSettlements(dateStr, settlementByCode) {
       rd.maturity_amount,
       rd.maturity_date,
       rd.value_date,
-      rd.status AS deal_status,
+      rd.trade_date,
+      COALESCE(rd.approval_status, rd.status) AS deal_status,
+      rd.status AS lifecycle_status,
+      rd.approval_status,
       COALESCE(corp.short_name, ind.short_name, joint.short_name, rd.counterparty_id) AS counterparty_name
     FROM repo_deals rd
     LEFT JOIN counterparty_master_corporate corp ON rd.counterparty_id = corp.id
@@ -821,6 +839,8 @@ async function queryRepoSettlements(dateStr, settlementByCode) {
     const cashFlow = isReverse ? 'Less' : 'Add';
     return {
       id: row.id || `repo-set-${idx}`,
+      trade_date: row.trade_date || null,
+      approval_status: row.approval_status || null,
       deal_number: row.deal_number,
       deal_type: 'repo',
       event_type: 'settlement',
@@ -865,6 +885,7 @@ async function queryBuybackLeg1Settlements(dateStr, settlementByCode) {
       bb.leg1_settlement_mode,
       bb.leg1_settlement_amount,
       bb.leg1_value_date,
+      bb.leg1_trade_date,
       bb.leg1_accrued_interest,
       bb.source_buy_deal_number,
       COALESCE(bb.leg1_adjusted_face_value, bb.leg1_face_value) AS face_value,
@@ -908,6 +929,7 @@ async function queryBuybackLeg1Settlements(dateStr, settlementByCode) {
 
     return {
       id: row.id || `bb-set-${idx}`,
+      trade_date: row.leg1_trade_date || null,
       deal_number: row.deal_number,
       deal_type: 'buyback',
       event_type: 'settlement',
